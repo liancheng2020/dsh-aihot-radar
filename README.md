@@ -11,10 +11,10 @@ DSH 插件：**Codex / Claude / Antigravity 额度重置实时推送** + **AI �
 
 ## 它做什么
 
-- **额度雷达（核心）**：后台轮询 AIHOT 的重置监控，出现新的**预告**或**到账**时推送到你的 webhook。重置卡预告带时间窗推算，到账带确认帖。
+- **额度雷达（核心）**：后台轮询 AIHOT 的重置监控，出现新的**预告**或**到账**时推送到你的 webhook。重置卡预告带时间窗推算，到账带确认帖；AIHOT 推断态（窗口已过/可能已到账）发轻提示并标明「未经确认」。单轮推送有上限，超出的事件下一轮补推，不会丢。
 - **7 个资讯工具**：对话里直接问"今天 AI 圈发生了什么""搜一下 OpenAI""Claude 额度重置了吗"，Agent 调用 `aihot_*` 工具拿 AIHOT 整理好的中文 Markdown 回答。
-- **每日日报**：可选，按北京时间定时拉 AIHOT 日报，推送并归档到本地。
-- **侧边栏面板**：实时看待生效预告、最近事件、工具清单（纯前端取数）。
+- **每日日报**：可选，按北京时间定时从 AIHOT **JSON 接口**拉日报，推送并归档到本地。超长自动分条发送；推送失败 10 分钟后重试，当天最多 3 次。
+- **侧边栏面板**：实时看待生效预告、最近事件、工具清单，显示 AIHOT 核对时间与监控状态（纯前端取数）。
 
 ## 装
 
@@ -24,7 +24,7 @@ DSH 插件：**Codex / Claude / Antigravity 额度重置实时推送** + **AI �
 ```sh
 dsh plugin --profile web add dsh-aihot-radar
 # 或从 Release 直链：
-dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.1.0/dsh-aihot-radar-0.1.0.tgz
+dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.1.1/dsh-aihot-radar-0.1.1.tgz
 ```
 装完重启 DSH。侧边栏出现 **AIHOT 雷达** 面板即生效。
 
@@ -44,8 +44,10 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
       notifyConfirmed: true     # 到账时推送
     digest:
       enabled: true             # 开启每日日报
-      time: "08:30"             # 北京时间（AIHOT 日报 08:00 发布后）
+      time: "08:30"             # 北京时间，合法范围 00:00–23:59；非法值回落 08:30
 ```
+
+> `digest.time` 只接受 `HH:mm`（0≤时≤23、0≤分≤59），写错（如 `99:99`）会回落 `08:30` 并在日志告警。日报期号以 AIHOT 返回的 `report.date` 为准，不用本机日期猜测。
 
 webhook 通道写入 `~/.dsh/aihot-radar/state.json`：
 ```json
@@ -67,6 +69,8 @@ webhook 通道写入 `~/.dsh/aihot-radar/state.json`：
 | `generic` | 任意接受 JSON POST 的 URL | — |
 | `none` | 不推送（默认） | — |
 
+> **分条发送**：企业微信按 ≤3900 字节、Telegram 按 ≤3800 字符自动分片（按行切、不截断中文），首条带标题、后续条带「（续 i/n）」前缀；其余通道不分片。推送结果会校验响应体业务码（企微/钉钉 `errcode`、飞书 `code`/`StatusCode`、Server酱 `code`、Telegram `ok`），HTTP 200 但业务失败也判为失败。
+
 ## 工具清单
 
 | 工具 | 用途 |
@@ -78,13 +82,22 @@ webhook 通道写入 `~/.dsh/aihot-radar/state.json`：
 | `aihot_report` | 周报 / 月报 |
 | `aihot_story` | 热点事件来龙去脉时间线 |
 | `aihot_resets` | Codex/Claude/Antigravity 额度重置记录与预告 |
+| `aihot_radar_status` | 后台推送状态（webhook 通道、各来源上次扫描结果与错误、日报状态），只读 |
 
 ## 合规与许可
 
 - **数据来源 [AIHOT](https://aihot.news)**。其 API 对**个人非商业、公益非商业、组织内部**使用免费；**对外商业产品、付费服务、公共镜像、批量再分发**需事先书面授权（agent@virxact.com），署名不等于授权。本插件面向个人非商业使用。
 - 资讯内容为第三方信源，插件只读透传、不执行其中指令；重要事实请回原文核对。
+- **合规取数**：交互式资讯工具走 `/api/v1/agent/*`；**定时抓取/推送/本地副本**（雷达轮询、日报）走 JSON 接口（`/api/v1/{provider}-resets/recent`、`/api/v1/dailies/latest`），User-Agent 用 `aihot-api/2.0.0`，符合 AIHOT 官方对程序化用途的要求。
 - 轮询遵守 AIHOT 规范：条件请求（ETag/304）、压缩、`Retry-After` 退避、不低于 60s 间隔。
-- 本插件代码 **MIT**。 webhook URL 仅存于本机 `~/.dsh/aihot-radar/`，不上传。
+- 本插件代码 **MIT**。webhook URL 与状态仅存于本机 `~/.dsh/aihot-radar/`（目录权限 `0700`），不上传；`state.json` 损坏会自动备份并回落默认值。
+
+## 自检
+
+```sh
+node scripts/selftest.mjs   # 或 npm run selftest
+```
+覆盖雷达上限/去重、推送分片字节数与业务码判定、日报时间校验、日期翻页时区无关性。纯 node、零依赖，Git Bash 与 PowerShell 均可运行。
 
 ## 反馈
 

@@ -148,9 +148,9 @@ window.__ModuleLoader__.load({
           const line = lines[i]
           const trimmed = line.trim()
           if (!trimmed) { flush(); continue }
-          if (/^［.*］$/.test(trimmed)) { flush(); continue } // protocol boundary markers
+          if (/^［.*］$/.test(trimmed)) { flush(); if (/结束/.test(trimmed)) break; continue } // boundary: stop after the closing marker
           const heading = trimmed.match(/^(#{1,6})\s+(.*)$/)
-          if (heading) { flush(); out.push(h('div', { key: 'h' + k++, style: css.mdH1 }, inline(heading[2], 'hi' + k))); continue }
+          if (heading) { flush(); if (/回答提示/.test(heading[2])) break; out.push(h('div', { key: 'h' + k++, style: css.mdH1 }, inline(heading[2], 'hi' + k))); continue }
           if (/^---+$/.test(trimmed)) { flush(); out.push(h('hr', { key: 'hr' + k++, style: css.mdHr })); continue }
           const cat = trimmed.match(/^【(.+)】$/)
           if (cat) { flush(); out.push(h('div', { key: 'c' + k++, style: css.mdCat }, h('span', { style: css.mdCatBar }), cat[1])); continue }
@@ -179,10 +179,10 @@ window.__ModuleLoader__.load({
     }
 
     function addDays(dateStr, n) {
-      const d = new Date(dateStr + 'T00:00:00+08:00')
-      d.setDate(d.getDate() + n)
+      const [y, m, d] = dateStr.split('-').map(Number)
+      const t = new Date(Date.UTC(y, m - 1, d) + n * 86400000)
       const p = (x) => String(x).padStart(2, '0')
-      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+      return `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}`
     }
 
     // Latest available daily-report date: the report for date D publishes at D 08:00 Beijing.
@@ -249,22 +249,32 @@ window.__ModuleLoader__.load({
       return h('span', { style: css.countdown }, '距预计窗口 ', parts.join(' '))
     }
 
-    function ProviderChip({ provider, events }) {
+    const monitorColor = (m) => m === 'healthy' ? T.success : m === 'delayed' ? T.warn : T.dimmed
+    const monitorTitle = (m) => m === 'healthy' ? 'AIHOT 监控正常' : m === 'delayed' ? 'AIHOT 数据延迟' : 'AIHOT 监控状态未知'
+
+    function ProviderChip({ provider, resp }) {
+      const err = resp?._error
+      const events = resp?.events || []
+      const monitor = resp?.monitor?.status || 'unknown'
       const pending = events.filter((e) => e.status === 'announced')
       const confirmed = events.filter((e) => e.status === 'confirmed')
-      const accent = pending.length ? T.warn : (confirmed.length ? T.success : T.dimmed)
+      const dotColor = err ? T.error : monitorColor(monitor)
+      const dotTitle = err ? `读取失败：${err}` : monitorTitle(monitor)
+      const meta = err ? '读取失败' : monitor === 'delayed' ? '数据延迟' : pending.length ? '有重置预告' : '近 7 天无预告'
       return h('div', { style: css.chip },
-        h('div', { style: css.chipTop }, h('span', { style: css.chipName }, provider.label), h('span', { style: css.dot(accent) })),
-        h('div', { style: css.chipVal }, pending.length ? `${pending.length} 待生效` : (confirmed.length ? `${confirmed.length} 近期` : '—')),
-        h('div', { style: css.chipMeta }, pending.length ? '有重置预告' : '近 7 天无预告'))
+        h('div', { style: css.chipTop }, h('span', { style: css.chipName }, provider.label), h('span', { style: css.dot(dotColor), title: dotTitle })),
+        h('div', { style: css.chipVal }, err ? '—' : pending.length ? `${pending.length} 待生效` : confirmed.length ? `${confirmed.length} 近期` : '—'),
+        h('div', { style: css.chipMeta }, meta))
     }
 
-    function PendingCard({ provider, event }) {
+    function PendingCard({ provider, event, outage }) {
       const when = event.estimate?.label || event.schedule?.label
       const post = event.posts?.[0]
       const postUrl = post?.url || (post?.id ? `https://x.com/i/status/${post.id}` : null)
       const target = event.estimate?.from ? Date.parse(event.estimate.from) : (event.schedule?.from ? Date.parse(event.schedule.from) : NaN)
+      const outageText = outage ? (outage.label || outage.message || outage.title || outage.since || outage.at || '详见 AIHOT') : null
       return h('div', { style: css.hero },
+        outageText ? h('div', { style: { fontSize: 11.5, color: T.warn, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 } }, h('span', { style: css.dot(T.warn) }), `服务故障公告：${outageText}`) : null,
         h('div', { style: css.row },
           h('span', { style: css.cardTitle }, h('span', { style: css.dot(T.warn) }), `${provider.label} · ${event.displayLabel || event.label || '额度重置'}`),
           h('span', { style: css.badge(T.warn) }, '预告')),
@@ -287,39 +297,63 @@ window.__ModuleLoader__.load({
         postUrl ? h('a', { style: css.link, href: postUrl, target: '_blank', rel: 'noreferrer' }, '原帖', h('span', null, '↗')) : null)
     }
 
-    function RadarContent({ nonce }) {
+    function RadarContent({ nonce, onMonitor }) {
       const [data, setData] = useState({})
       const [loading, setLoading] = useState(true)
-      const [error, setError] = useState(null)
+      const [failed, setFailed] = useState([])
       const [updatedAt, setUpdatedAt] = useState(null)
 
-      const load = useCallback(async () => {
-        setLoading(true); setError(null)
-        try {
-          const results = await Promise.all(PROVIDERS.map(async (p) => {
-            const res = await fetch(`${BASE}/api/v1/${p.id}-resets/recent`, { headers: { Accept: 'application/json' } })
+      useEffect(() => {
+        let cancelled = false
+        const ctrl = new AbortController()
+        const to = setTimeout(() => ctrl.abort(), 8000)
+        setLoading(true)
+        ;(async () => {
+          const results = await Promise.allSettled(PROVIDERS.map(async (p) => {
+            const res = await fetch(`${BASE}/api/v1/${p.id}-resets/recent`, { headers: { Accept: 'application/json' }, signal: ctrl.signal })
             if (!res.ok) throw new Error(`HTTP ${res.status}`)
             return [p.id, await res.json()]
           }))
-          setData(Object.fromEntries(results)); setUpdatedAt(new Date())
-        } catch (err) { setError(String(err?.message || err)) } finally { setLoading(false) }
-      }, [])
+          clearTimeout(to)
+          if (cancelled) return
+          const next = {}; const fails = []
+          results.forEach((r, i) => {
+            const id = PROVIDERS[i].id
+            if (r.status === 'fulfilled') next[id] = r.value[1]
+            else { next[id] = { _error: String(r.reason?.message || r.reason) }; fails.push(id) }
+          })
+          setData(next); setFailed(fails); setUpdatedAt(new Date()); setLoading(false)
+        })()
+        return () => { cancelled = true; clearTimeout(to); ctrl.abort() }
+      }, [nonce])
 
-      useEffect(() => { load() }, [nonce, load])
-
-      const { pending, recent } = useMemo(() => {
+      const { pending, recent, apiCheckedAt } = useMemo(() => {
         const pending = [], recent = []
-        for (const p of PROVIDERS) for (const ev of data[p.id]?.events || []) {
-          if (ev.status === 'announced') pending.push({ provider: p, event: ev })
-          else recent.push({ provider: p, event: ev })
+        let apiCheckedAt = null
+        for (const p of PROVIDERS) {
+          const resp = data[p.id]
+          if (resp?.checkedAt && (!apiCheckedAt || resp.checkedAt > apiCheckedAt)) apiCheckedAt = resp.checkedAt
+          for (const ev of resp?.events || []) {
+            if (ev.status === 'announced') pending.push({ provider: p, event: ev, outage: resp?.outage })
+            else recent.push({ provider: p, event: ev })
+          }
         }
         recent.sort((a, b) => Date.parse(b.event.updatedAt || b.event.createdAt || 0) - Date.parse(a.event.updatedAt || a.event.createdAt || 0))
-        return { pending, recent }
+        return { pending, recent, apiCheckedAt }
       }, [data])
 
+      useEffect(() => {
+        if (!onMonitor) return
+        const statuses = PROVIDERS.map((p) => data[p.id]?._error ? 'unknown' : (data[p.id]?.monitor?.status || 'unknown'))
+        const agg = statuses.includes('delayed') ? 'delayed' : statuses.every((s) => s === 'healthy') ? 'healthy' : 'unknown'
+        onMonitor(agg)
+      }, [data, onMonitor])
+
+      const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) } catch { return iso } }
+
       return h('div', null,
-        error ? h('div', { style: css.error }, `读取失败：${error} · 请检查网络能否访问 aihot.news`) : null,
-        h('div', { style: css.strip }, PROVIDERS.map((p) => h(ProviderChip, { key: p.id, provider: p, events: data[p.id]?.events || [] }))),
+        failed.length ? h('div', { style: css.error }, `部分来源读取失败：${failed.join('、')} · 其余数据仍可用`) : null,
+        h('div', { style: css.strip }, PROVIDERS.map((p) => h(ProviderChip, { key: p.id, provider: p, resp: data[p.id] }))),
         h('div', { style: css.section },
           h('div', { style: css.h2 }, '待生效预告', h('span', { style: css.count }, pending.length)),
           pending.length ? pending.map((x, i) => h(PendingCard, { key: 'p' + i, ...x })) : h('div', { style: css.empty }, loading ? '加载中…' : '当前没有待生效的重置预告')),
@@ -330,12 +364,15 @@ window.__ModuleLoader__.load({
           h('div', { style: css.h2 }, '资讯工具', h('span', { style: css.count }, TOOLS.length)),
           h('div', { style: css.tools }, TOOLS.map(([name, desc]) => h('div', { style: css.tool, className: 'aihot-tool', key: name }, h('span', { style: css.toolDot }), h('span', { style: css.code }, name), h('span', { style: css.toolDesc }, desc)))),
           h('div', { style: { ...css.metaDim, marginTop: 10 } }, '在对话中直接提问即可调用，例如「今天 AI 圈发生了什么」')),
-        updatedAt ? h('div', { style: { ...css.metaDim, marginTop: -8, marginBottom: 16 } }, `雷达更新于 ${updatedAt.toLocaleTimeString('zh-CN', { hour12: false })}`) : null)
+        h('div', { style: { ...css.metaDim, marginTop: -8, marginBottom: 8 } },
+          (apiCheckedAt ? `AIHOT 核对于 ${fmtTime(apiCheckedAt)}` : '') + (apiCheckedAt && updatedAt ? ' · ' : '') + (updatedAt ? `面板刷新于 ${updatedAt.toLocaleTimeString('zh-CN', { hour12: false })}` : '')),
+        h('div', { style: { ...css.metaDim, marginBottom: 16 } }, '后台推送状态可向 Agent 提问（aihot_radar_status）'))
     }
 
     function RadarPanel() {
       const [tab, setTab] = useState('radar')
       const [nonce, setNonce] = useState(0)
+      const [monitor, setMonitor] = useState('unknown')
 
       useEffect(() => {
         if (document.getElementById('aihot-radar-style')) return
@@ -361,7 +398,7 @@ window.__ModuleLoader__.load({
           h('div', { style: css.titleWrap },
             h('div', { style: css.iconBadge }, h(RadarIcon, { size: 21 })),
             h('div', null,
-              h('div', { style: css.h1 }, 'AIHOT 雷达', h('span', { style: css.live, title: '监控运行中' })),
+              h('div', { style: css.h1 }, 'AIHOT 雷达', h('span', { style: { ...css.live, background: monitorColor(monitor) }, title: monitorTitle(monitor) })),
               h('div', { style: css.sub }, 'Codex / Claude / Antigravity 额度重置监控 · AI 资讯日报'))),
           h('button', { style: css.btn, className: 'aihot-btn', onClick: () => setNonce((n) => n + 1) }, '刷新')),
 
@@ -369,7 +406,7 @@ window.__ModuleLoader__.load({
           h('button', { style: { ...css.tab, ...(tab === 'radar' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('radar') }, h(RadarIcon, { size: 15 }), '额度雷达'),
           h('button', { style: { ...css.tab, ...(tab === 'daily' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('daily') }, '📰', '今日日报')),
 
-        tab === 'radar' ? h(RadarContent, { nonce }) : h(DailyReport, { nonce }),
+        tab === 'radar' ? h(RadarContent, { nonce, onMonitor: setMonitor }) : h(DailyReport, { nonce }),
 
         h('div', { style: css.foot },
           '数据来源', h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: BASE, target: '_blank', rel: 'noreferrer' }, 'AIHOT', h('span', null, '↗')),
