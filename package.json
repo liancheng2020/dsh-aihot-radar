@@ -2,7 +2,12 @@
   "name": "dsh-aihot-radar",
   "version": "0.1.1",
   "description": "AIHOT 雷达 + 资讯值班：Codex/Claude/Antigravity 额度重置实时推送，外加 AIHOT 资讯 Agent 工具。免 Key、零运行时依赖。",
+  "author": "liancheng2020",
   "type": "module",
+  "engines": {
+    "node": ">=18",
+    "dsh": ">=0.2.1-rc.2"
+  },
   "main": "index.js",
   "scripts": {
     "selftest": "node scripts/selftest.mjs"
@@ -22,7 +27,9 @@
     "locale",
     "icon.svg",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "LICENSE",
+    "scripts"
   ],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
@@ -34,6 +41,11 @@
         "@deepseek-ai/dsh-client-ui-theme",
         "@deepseek-ai/dsh-client-locale"
       ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-rc.2+": "compatible"
+      }
     }
   },
   "peerDependencies": {

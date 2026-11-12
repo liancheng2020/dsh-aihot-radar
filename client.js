@@ -1,28 +1,105 @@
 // Client half: a sidebar panel that reads the public AIHOT API directly
 // (CORS: *). Two tabs: the quota-reset radar and a daily-report reader.
-// Styled with the host's --dsw-alias-* theme tokens so it matches DSH natively.
+// Bilingual UI (zh/en) following the host locale; styled with --dsw-alias-* tokens.
+// The message catalog below mirrors locale/*.json (build-free plugin: the module
+// loader cannot require arbitrary JSON, so the catalog is inlined here).
 window.__ModuleLoader__.load({
   id: 'dsh-aihot-radar',
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useCallback, useMemo } = React
+    const { useState, useEffect, useMemo } = React
 
     const BASE = 'https://aihot.news'
+    // Keep in sync with lib/api.js PROVIDERS.
     const PROVIDERS = [
       { id: 'codex', label: 'Codex' },
       { id: 'claude', label: 'Claude' },
       { id: 'antigravity', label: 'Antigravity' },
     ]
     const TOOLS = [
-      ['aihot_latest', '最近 AI 重点资讯'],
-      ['aihot_search', '关键词搜索资讯'],
-      ['aihot_hot', '当前 AI 热榜'],
-      ['aihot_daily', 'AIHOT 日报'],
-      ['aihot_report', '周报 / 月报'],
-      ['aihot_story', '热点事件时间线'],
-      ['aihot_resets', '额度重置记录'],
+      ['aihot_latest', 'tool.latest'],
+      ['aihot_search', 'tool.search'],
+      ['aihot_hot', 'tool.hot'],
+      ['aihot_daily', 'tool.daily'],
+      ['aihot_report', 'tool.report'],
+      ['aihot_story', 'tool.story'],
+      ['aihot_resets', 'tool.resets'],
     ]
+
+    const L = {
+      zh: {
+        'meta.title': 'AIHOT 雷达',
+        'sub': 'Codex / Claude / Antigravity 额度重置监控 · AI 资讯日报',
+        'refresh': '刷新',
+        'tab.radar': '额度雷达', 'tab.daily': '今日日报',
+        'monitor.healthy': 'AIHOT 监控正常', 'monitor.delayed': 'AIHOT 数据延迟', 'monitor.unknown': 'AIHOT 监控状态未知',
+        'chip.pending': '{n} 待生效', 'chip.recent': '{n} 近期',
+        'chip.hasPending': '有重置预告', 'chip.noPending': '近 7 天无预告', 'chip.delayed': '数据延迟', 'chip.failed': '读取失败',
+        'sec.pending': '待生效预告', 'sec.recent': '最近事件', 'sec.tools': '资讯工具',
+        'empty.pending': '当前没有待生效的重置预告', 'empty.loading': '加载中…', 'empty.recent': '近 7 天无记录',
+        'tools.hint': '在对话中直接提问即可调用，例如「今天 AI 圈发生了什么」',
+        'status.checkedAt': 'AIHOT 核对于 {t}', 'status.refreshedAt': '面板刷新于 {t}',
+        'status.askAgent': '后台推送状态可向 Agent 提问（aihot_radar_status）',
+        'badge.announced': '预告', 'badge.confirmed': '已到账',
+        'reset.default': '额度重置', 'outage': '服务故障公告：{t}', 'estimate': '预计：{t}',
+        'link.source': '查看原帖', 'link.sourceShort': '原帖',
+        'countdown.prefix': '距预计窗口', 'countdown.open': '窗口已开启 · 待确认',
+        'unit.day': '天', 'unit.hour': '小时', 'unit.min': '分', 'unit.sec': '秒',
+        'daily.prev': '← 前一天', 'daily.next': '后一天 →', 'daily.latest': '回到最新', 'daily.web': '网页版',
+        'daily.latestLabel': '最新一期', 'daily.atLatest': '已是最新日报', 'daily.nextTitle': '查看后一天',
+        'daily.failed': '日报读取失败：{e}', 'daily.loading': '日报加载中…',
+        'foot.source': '数据来源', 'foot.push': '后台雷达自动推送 · webhook 见 state.json',
+        'err.partial': '部分来源读取失败：{p} · 其余数据仍可用',
+        'tool.latest': '最近 AI 重点资讯', 'tool.search': '关键词搜索资讯', 'tool.hot': '当前 AI 热榜',
+        'tool.daily': 'AIHOT 日报', 'tool.report': '周报 / 月报', 'tool.story': '热点事件时间线', 'tool.resets': '额度重置记录',
+      },
+      en: {
+        'meta.title': 'AIHOT Radar',
+        'sub': 'Codex / Claude / Antigravity quota-reset monitoring · AI news digest',
+        'refresh': 'Refresh',
+        'tab.radar': 'Quota Radar', 'tab.daily': 'Daily Report',
+        'monitor.healthy': 'AIHOT monitor healthy', 'monitor.delayed': 'AIHOT data delayed', 'monitor.unknown': 'AIHOT monitor status unknown',
+        'chip.pending': '{n} pending', 'chip.recent': '{n} recent',
+        'chip.hasPending': 'Reset pending', 'chip.noPending': 'No pending in 7 days', 'chip.delayed': 'Data delayed', 'chip.failed': 'Failed to load',
+        'sec.pending': 'Pending announcements', 'sec.recent': 'Recent events', 'sec.tools': 'News tools',
+        'empty.pending': 'No pending reset announcements', 'empty.loading': 'Loading…', 'empty.recent': 'No records in 7 days',
+        'tools.hint': 'Ask in chat to invoke, e.g. "what happened in AI today"',
+        'status.checkedAt': 'AIHOT checked at {t}', 'status.refreshedAt': 'Panel refreshed at {t}',
+        'status.askAgent': 'Ask the agent for push status (aihot_radar_status)',
+        'badge.announced': 'Announced', 'badge.confirmed': 'Confirmed',
+        'reset.default': 'Quota reset', 'outage': 'Service outage: {t}', 'estimate': 'Expected: {t}',
+        'link.source': 'View source', 'link.sourceShort': 'Source',
+        'countdown.prefix': 'Window opens in', 'countdown.open': 'Window open · unconfirmed',
+        'unit.day': 'd', 'unit.hour': 'h', 'unit.min': 'm', 'unit.sec': 's',
+        'daily.prev': '← Prev day', 'daily.next': 'Next day →', 'daily.latest': 'Back to latest', 'daily.web': 'Web version',
+        'daily.latestLabel': 'Latest edition', 'daily.atLatest': 'Already the latest', 'daily.nextTitle': 'View next day',
+        'daily.failed': 'Failed to load daily: {e}', 'daily.loading': 'Loading daily…',
+        'foot.source': 'Data source', 'foot.push': 'Background radar auto-push · webhook in state.json',
+        'err.partial': 'Some sources failed: {p} · other data still available',
+        'tool.latest': 'Latest AI highlights', 'tool.search': 'Keyword news search', 'tool.hot': 'Current AI trending',
+        'tool.daily': 'AIHOT daily', 'tool.report': 'Weekly / monthly', 'tool.story': 'Event timeline', 'tool.resets': 'Quota-reset records',
+      },
+    }
+
+    let LOCALE = null
+    let LANG = 'zh'
+    const activeLang = () => { try { return LOCALE?.getLocale?.().active === 'en' ? 'en' : 'zh' } catch { return 'zh' } }
+    const tr = (key, lang) => (L[lang] && L[lang][key]) || L.zh[key] || key
+    function t(key, vars) {
+      let s = tr(key, LANG)
+      if (vars) for (const k in vars) s = s.split('{' + k + '}').join(vars[k])
+      return s
+    }
+    function useActiveLang() {
+      const [lang, setLang] = useState(activeLang)
+      useEffect(() => {
+        if (!LOCALE || typeof LOCALE.subscribe !== 'function') return
+        const un = LOCALE.subscribe(() => setLang(activeLang()))
+        return () => { if (typeof un === 'function') un() }
+      }, [])
+      return lang
+    }
 
     const T = {
       text: 'var(--dsw-alias-label-primary, #e8e8ea)',
@@ -42,7 +119,7 @@ window.__ModuleLoader__.load({
     }
 
     const css = {
-      panel: { padding: '20px 22px', color: T.text, fontSize: 13, lineHeight: 1.6, overflowY: 'auto', height: '100%', background: T.base },
+      panel: { boxSizing: 'border-box', padding: '20px 22px', color: T.text, fontSize: 13, lineHeight: 1.6, overflowY: 'auto', height: '100%', background: T.base },
       head: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 },
       titleWrap: { display: 'flex', alignItems: 'center', gap: 10 },
       iconBadge: { width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, rgba(91,140,255,0.18), rgba(245,166,35,0.14))', border: `1px solid ${T.border}`, color: T.brand, flex: 'none' },
@@ -53,7 +130,7 @@ window.__ModuleLoader__.load({
       tabs: { display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${T.borderSoft}`, paddingBottom: 12 },
       tab: { fontSize: 13, fontWeight: 600, padding: '7px 16px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', color: T.tertiary, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 7 },
       tabActive: { background: 'rgba(91,140,255,0.12)', border: `1px solid rgba(91,140,255,0.35)`, color: T.brand },
-      strip: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 22 },
+      strip: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 10, marginBottom: 22 },
       chip: { background: T.layer1, border: `1px solid ${T.borderSoft}`, borderRadius: 10, padding: '10px 12px' },
       chipTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
       chipName: { fontSize: 12, fontWeight: 600, color: T.sub },
@@ -82,7 +159,6 @@ window.__ModuleLoader__.load({
       empty: { color: T.dimmed, fontSize: 12.5, fontStyle: 'italic', padding: '14px 16px', background: T.layer1, border: `1px dashed ${T.border}`, borderRadius: 10 },
       error: { color: T.error, fontSize: 12.5, padding: '12px 14px', background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.3)', borderRadius: 10, marginBottom: 16 },
       foot: { marginTop: 8, paddingTop: 14, borderTop: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: T.sub, display: 'flex', alignItems: 'center', gap: 6 },
-      // daily report
       dtoolbar: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
       dnav: { fontSize: 12, padding: '5px 12px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.layer1, color: T.sub, cursor: 'pointer', transition: 'all .15s ease' },
       ddate: { fontSize: 13, fontWeight: 650, color: T.text, padding: '0 6px' },
@@ -113,16 +189,18 @@ window.__ModuleLoader__.load({
     // ---- Safe Markdown renderer (React elements only, no innerHTML) ----
     function inline(text, kp) {
       const nodes = []
-      const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g
+      const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|https?:\/\/[^\s)]+)/g
       let last = 0, m, i = 0
+      const link = (label, url, key) => h('a', { key, href: url, target: '_blank', rel: 'noreferrer', style: css.mdLink, className: 'aihot-link' }, label)
       while ((m = re.exec(text))) {
         if (m.index > last) nodes.push(text.slice(last, m.index))
         const tok = m[0]
         if (tok.startsWith('**')) nodes.push(h('strong', { key: kp + i, style: { color: T.text, fontWeight: 650 } }, tok.slice(2, -2)))
         else if (tok.startsWith('`')) nodes.push(h('code', { key: kp + i, style: css.mdCode }, tok.slice(1, -1)))
+        else if (/^https?:\/\//.test(tok)) nodes.push(link(tok, tok, kp + i))
         else {
           const mm = tok.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/)
-          if (mm && /^https?:\/\//.test(mm[2])) nodes.push(h('a', { key: kp + i, href: mm[2], target: '_blank', rel: 'noreferrer', style: css.mdLink, className: 'aihot-link' }, mm[1]))
+          if (mm && /^https?:\/\//.test(mm[2])) nodes.push(link(mm[1], mm[2], kp + i))
           else nodes.push(tok)
         }
         last = m.index + tok.length; i++
@@ -148,7 +226,7 @@ window.__ModuleLoader__.load({
           const line = lines[i]
           const trimmed = line.trim()
           if (!trimmed) { flush(); continue }
-          if (/^［.*］$/.test(trimmed)) { flush(); if (/结束/.test(trimmed)) break; continue } // boundary: stop after the closing marker
+          if (/^［.*］$/.test(trimmed)) { flush(); if (/结束/.test(trimmed)) break; continue }
           const heading = trimmed.match(/^(#{1,6})\s+(.*)$/)
           if (heading) { flush(); if (/回答提示/.test(heading[2])) break; out.push(h('div', { key: 'h' + k++, style: css.mdH1 }, inline(heading[2], 'hi' + k))); continue }
           if (/^---+$/.test(trimmed)) { flush(); out.push(h('hr', { key: 'hr' + k++, style: css.mdHr })); continue }
@@ -180,12 +258,11 @@ window.__ModuleLoader__.load({
 
     function addDays(dateStr, n) {
       const [y, m, d] = dateStr.split('-').map(Number)
-      const t = new Date(Date.UTC(y, m - 1, d) + n * 86400000)
+      const t2 = new Date(Date.UTC(y, m - 1, d) + n * 86400000)
       const p = (x) => String(x).padStart(2, '0')
-      return `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}`
+      return `${t2.getUTCFullYear()}-${p(t2.getUTCMonth() + 1)}-${p(t2.getUTCDate())}`
     }
 
-    // Latest available daily-report date: the report for date D publishes at D 08:00 Beijing.
     function latestReportDate() {
       const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
       const g = Object.fromEntries(parts.map((p) => [p.type, p.value]))
@@ -195,24 +272,32 @@ window.__ModuleLoader__.load({
     }
 
     function DailyReport({ nonce }) {
-      const [date, setDate] = useState(null) // null = latest
+      const [date, setDate] = useState(null)
       const [md, setMd] = useState('')
       const [loading, setLoading] = useState(true)
       const [error, setError] = useState(null)
 
-      const load = useCallback(async (d) => {
+      useEffect(() => {
+        let cancelled = false
+        const ctrl = new AbortController()
+        const to = setTimeout(() => ctrl.abort(), 8000)
         setLoading(true); setError(null)
-        try {
-          const url = d ? `${BASE}/api/v1/agent/daily/${d}` : `${BASE}/api/v1/agent/daily`
-          const res = await fetch(url, { headers: { Accept: 'text/markdown, text/plain' } })
-          if (!res.ok) throw new Error(`HTTP ${res.status}`)
-          setMd(await res.text())
-        } catch (err) {
-          setError(String(err?.message || err)); setMd('')
-        } finally { setLoading(false) }
-      }, [])
-
-      useEffect(() => { load(date) }, [date, nonce, load])
+        ;(async () => {
+          try {
+            const url = date ? `${BASE}/api/v1/agent/daily/${date}` : `${BASE}/api/v1/agent/daily`
+            const res = await fetch(url, { headers: { Accept: 'text/markdown, text/plain' }, signal: ctrl.signal })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const text = await res.text()
+            if (!cancelled) setMd(text)
+          } catch (err) {
+            if (!cancelled) { setError(String(err?.message || err)); setMd('') }
+          } finally {
+            clearTimeout(to)
+            if (!cancelled) setLoading(false)
+          }
+        })()
+        return () => { cancelled = true; clearTimeout(to); ctrl.abort() }
+      }, [date, nonce])
 
       const shownDate = useMemo(() => {
         const m = md.match(/日报\s*·\s*(\d{4}-\d{2}-\d{2})/)
@@ -225,32 +310,32 @@ window.__ModuleLoader__.load({
 
       return h('div', null,
         h('div', { style: css.dtoolbar },
-          h('button', { style: css.dnav, className: 'aihot-btn', onClick: () => setDate(shownDate ? addDays(shownDate, -1) : null), disabled: loading }, '← 前一天'),
-          h('span', { style: css.ddate }, shownDate || '最新一期'),
-          h('button', { style: { ...css.dnav, ...(nextDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }, className: 'aihot-btn', onClick: () => { if (!nextDisabled && shownDate) setDate(addDays(shownDate, 1)) }, disabled: nextDisabled, title: atLatest ? '已是最新日报' : '查看后一天' }, '后一天 →'),
-          h('button', { style: { ...css.dnav, marginLeft: 'auto' }, className: 'aihot-btn', onClick: () => { setDate(null); load(null) } }, '回到最新'),
-          shownDate ? h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: `${BASE}/daily/${shownDate}`, target: '_blank', rel: 'noreferrer' }, '网页版', h('span', null, '↗')) : null),
-        error ? h('div', { style: css.error }, `日报读取失败：${error}`) : null,
-        loading && !md ? h('div', { style: css.empty }, '日报加载中…') : h(Markdown, { source: md }))
+          h('button', { type: 'button', style: css.dnav, className: 'aihot-btn', onClick: () => setDate(shownDate ? addDays(shownDate, -1) : null), disabled: loading }, t('daily.prev')),
+          h('span', { style: css.ddate }, shownDate || t('daily.latestLabel')),
+          h('button', { type: 'button', style: { ...css.dnav, ...(nextDisabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }, className: 'aihot-btn', onClick: () => { if (!nextDisabled && shownDate) setDate(addDays(shownDate, 1)) }, disabled: nextDisabled, title: atLatest ? t('daily.atLatest') : t('daily.nextTitle') }, t('daily.next')),
+          h('button', { type: 'button', style: { ...css.dnav, marginLeft: 'auto' }, className: 'aihot-btn', onClick: () => setDate(null) }, t('daily.latest')),
+          shownDate ? h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: `${BASE}/daily/${shownDate}`, target: '_blank', rel: 'noreferrer' }, t('daily.web'), h('span', null, '↗')) : null),
+        error ? h('div', { style: css.error }, t('daily.failed', { e: error })) : null,
+        loading && !md ? h('div', { style: css.empty }, t('daily.loading')) : h(Markdown, { source: md }))
     }
 
     function Countdown({ target }) {
       const [now, setNow] = useState(() => Date.now())
-      useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
+      useEffect(() => { const ti = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(ti) }, [])
       const ms = target - now
       if (!Number.isFinite(ms)) return null
-      if (ms <= 0) return h('span', { style: css.countdown }, '窗口已开启 · 待确认')
+      if (ms <= 0) return h('span', { style: css.countdown }, t('countdown.open'))
       const s = Math.floor(ms / 1000)
       const d = Math.floor(s / 86400), hh = Math.floor((s % 86400) / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60
       const parts = []
-      if (d) parts.push(`${d}天`)
-      if (hh || d) parts.push(`${hh}小时`)
-      parts.push(`${mm}分`, `${String(ss).padStart(2, '0')}秒`)
-      return h('span', { style: css.countdown }, '距预计窗口 ', parts.join(' '))
+      if (d) parts.push(`${d}${t('unit.day')}`)
+      if (hh || d) parts.push(`${hh}${t('unit.hour')}`)
+      parts.push(`${mm}${t('unit.min')}`, `${String(ss).padStart(2, '0')}${t('unit.sec')}`)
+      return h('span', { style: css.countdown }, t('countdown.prefix') + ' ', parts.join(' '))
     }
 
     const monitorColor = (m) => m === 'healthy' ? T.success : m === 'delayed' ? T.warn : T.dimmed
-    const monitorTitle = (m) => m === 'healthy' ? 'AIHOT 监控正常' : m === 'delayed' ? 'AIHOT 数据延迟' : 'AIHOT 监控状态未知'
+    const monitorTitle = (m) => t(m === 'healthy' ? 'monitor.healthy' : m === 'delayed' ? 'monitor.delayed' : 'monitor.unknown')
 
     function ProviderChip({ provider, resp }) {
       const err = resp?._error
@@ -259,11 +344,11 @@ window.__ModuleLoader__.load({
       const pending = events.filter((e) => e.status === 'announced')
       const confirmed = events.filter((e) => e.status === 'confirmed')
       const dotColor = err ? T.error : monitorColor(monitor)
-      const dotTitle = err ? `读取失败：${err}` : monitorTitle(monitor)
-      const meta = err ? '读取失败' : monitor === 'delayed' ? '数据延迟' : pending.length ? '有重置预告' : '近 7 天无预告'
+      const dotTitle = err ? `${t('chip.failed')}: ${err}` : monitorTitle(monitor)
+      const meta = err ? t('chip.failed') : monitor === 'delayed' ? t('chip.delayed') : pending.length ? t('chip.hasPending') : t('chip.noPending')
       return h('div', { style: css.chip },
         h('div', { style: css.chipTop }, h('span', { style: css.chipName }, provider.label), h('span', { style: css.dot(dotColor), title: dotTitle })),
-        h('div', { style: css.chipVal }, err ? '—' : pending.length ? `${pending.length} 待生效` : confirmed.length ? `${confirmed.length} 近期` : '—'),
+        h('div', { style: css.chipVal }, err ? '—' : pending.length ? t('chip.pending', { n: pending.length }) : confirmed.length ? t('chip.recent', { n: confirmed.length }) : '—'),
         h('div', { style: css.chipMeta }, meta))
     }
 
@@ -272,17 +357,17 @@ window.__ModuleLoader__.load({
       const post = event.posts?.[0]
       const postUrl = post?.url || (post?.id ? `https://x.com/i/status/${post.id}` : null)
       const target = event.estimate?.from ? Date.parse(event.estimate.from) : (event.schedule?.from ? Date.parse(event.schedule.from) : NaN)
-      const outageText = outage ? (outage.label || outage.message || outage.title || outage.since || outage.at || '详见 AIHOT') : null
+      const outageText = outage ? (outage.label || outage.message || outage.title || outage.since || outage.at || 'AIHOT') : null
       return h('div', { style: css.hero },
-        outageText ? h('div', { style: { fontSize: 11.5, color: T.warn, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 } }, h('span', { style: css.dot(T.warn) }), `服务故障公告：${outageText}`) : null,
+        outageText ? h('div', { style: { fontSize: 11.5, color: T.warn, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 } }, h('span', { style: css.dot(T.warn) }), t('outage', { t: outageText })) : null,
         h('div', { style: css.row },
-          h('span', { style: css.cardTitle }, h('span', { style: css.dot(T.warn) }), `${provider.label} · ${event.displayLabel || event.label || '额度重置'}`),
-          h('span', { style: css.badge(T.warn) }, '预告')),
+          h('span', { style: css.cardTitle }, h('span', { style: css.dot(T.warn) }), `${provider.label} · ${event.displayLabel || event.label || t('reset.default')}`),
+          h('span', { style: css.badge(T.warn) }, t('badge.announced'))),
         event.title ? h('div', { style: css.meta }, event.title) : null,
-        when ? h('div', { style: css.metaDim }, `预计：${when}`) : null,
+        when ? h('div', { style: css.metaDim }, t('estimate', { t: when })) : null,
         (Number.isFinite(target) || postUrl) ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 10 } },
           Number.isFinite(target) ? h(Countdown, { target }) : null,
-          postUrl ? h('a', { style: { ...css.link, marginTop: 0 }, href: postUrl, target: '_blank', rel: 'noreferrer' }, '查看原帖', h('span', null, '↗')) : null) : null)
+          postUrl ? h('a', { style: { ...css.link, marginTop: 0 }, href: postUrl, target: '_blank', rel: 'noreferrer' }, t('link.source'), h('span', null, '↗')) : null) : null)
     }
 
     function EventCard({ provider, event }) {
@@ -291,10 +376,10 @@ window.__ModuleLoader__.load({
       const postUrl = post?.url || (post?.id ? `https://x.com/i/status/${post.id}` : null)
       return h('div', { style: css.card, className: 'aihot-card' },
         h('div', { style: css.row },
-          h('span', { style: css.cardTitle }, h('span', { style: css.dot(T.success) }), `${provider.label} · ${event.displayLabel || event.label || '额度重置'}`),
-          h('span', { style: css.badgeSoft(T.success) }, '已到账')),
+          h('span', { style: css.cardTitle }, h('span', { style: css.dot(T.success) }), `${provider.label} · ${event.displayLabel || event.label || t('reset.default')}`),
+          h('span', { style: css.badgeSoft(T.success) }, t('badge.confirmed'))),
         when ? h('div', { style: css.metaDim }, when) : null,
-        postUrl ? h('a', { style: css.link, href: postUrl, target: '_blank', rel: 'noreferrer' }, '原帖', h('span', null, '↗')) : null)
+        postUrl ? h('a', { style: css.link, href: postUrl, target: '_blank', rel: 'noreferrer' }, t('link.sourceShort'), h('span', null, '↗')) : null)
     }
 
     function RadarContent({ nonce, onMonitor }) {
@@ -349,27 +434,28 @@ window.__ModuleLoader__.load({
         onMonitor(agg)
       }, [data, onMonitor])
 
-      const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) } catch { return iso } }
+      const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) } catch { return iso } }
 
       return h('div', null,
-        failed.length ? h('div', { style: css.error }, `部分来源读取失败：${failed.join('、')} · 其余数据仍可用`) : null,
+        failed.length ? h('div', { style: css.error }, t('err.partial', { p: failed.join('、') })) : null,
         h('div', { style: css.strip }, PROVIDERS.map((p) => h(ProviderChip, { key: p.id, provider: p, resp: data[p.id] }))),
         h('div', { style: css.section },
-          h('div', { style: css.h2 }, '待生效预告', h('span', { style: css.count }, pending.length)),
-          pending.length ? pending.map((x, i) => h(PendingCard, { key: 'p' + i, ...x })) : h('div', { style: css.empty }, loading ? '加载中…' : '当前没有待生效的重置预告')),
+          h('div', { style: css.h2 }, t('sec.pending'), h('span', { style: css.count }, pending.length)),
+          pending.length ? pending.map((x, i) => h(PendingCard, { key: 'p' + i, ...x })) : h('div', { style: css.empty }, loading ? t('empty.loading') : t('empty.pending'))),
         h('div', { style: css.section },
-          h('div', { style: css.h2 }, '最近事件', h('span', { style: css.count }, recent.length)),
-          recent.length ? h('div', { style: css.grid }, recent.slice(0, 10).map((x, i) => h(EventCard, { key: 'r' + i, ...x }))) : h('div', { style: css.empty }, loading ? '加载中…' : '近 7 天无记录')),
+          h('div', { style: css.h2 }, t('sec.recent'), h('span', { style: css.count }, recent.length)),
+          recent.length ? h('div', { style: css.grid }, recent.slice(0, 10).map((x, i) => h(EventCard, { key: 'r' + i, ...x }))) : h('div', { style: css.empty }, loading ? t('empty.loading') : t('empty.recent'))),
         h('div', { style: css.section },
-          h('div', { style: css.h2 }, '资讯工具', h('span', { style: css.count }, TOOLS.length)),
-          h('div', { style: css.tools }, TOOLS.map(([name, desc]) => h('div', { style: css.tool, className: 'aihot-tool', key: name }, h('span', { style: css.toolDot }), h('span', { style: css.code }, name), h('span', { style: css.toolDesc }, desc)))),
-          h('div', { style: { ...css.metaDim, marginTop: 10 } }, '在对话中直接提问即可调用，例如「今天 AI 圈发生了什么」')),
+          h('div', { style: css.h2 }, t('sec.tools'), h('span', { style: css.count }, TOOLS.length)),
+          h('div', { style: css.tools }, TOOLS.map(([name, key]) => h('div', { style: css.tool, className: 'aihot-tool', key: name }, h('span', { style: css.toolDot }), h('span', { style: css.code }, name), h('span', { style: css.toolDesc }, t(key))))),
+          h('div', { style: { ...css.metaDim, marginTop: 10 } }, t('tools.hint'))),
         h('div', { style: { ...css.metaDim, marginTop: -8, marginBottom: 8 } },
-          (apiCheckedAt ? `AIHOT 核对于 ${fmtTime(apiCheckedAt)}` : '') + (apiCheckedAt && updatedAt ? ' · ' : '') + (updatedAt ? `面板刷新于 ${updatedAt.toLocaleTimeString('zh-CN', { hour12: false })}` : '')),
-        h('div', { style: { ...css.metaDim, marginBottom: 16 } }, '后台推送状态可向 Agent 提问（aihot_radar_status）'))
+          (apiCheckedAt ? t('status.checkedAt', { t: fmtTime(apiCheckedAt) }) : '') + (apiCheckedAt && updatedAt ? ' · ' : '') + (updatedAt ? t('status.refreshedAt', { t: updatedAt.toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false }) }) : '')),
+        h('div', { style: { ...css.metaDim, marginBottom: 16 } }, t('status.askAgent')))
     }
 
     function RadarPanel() {
+      LANG = useActiveLang()
       const [tab, setTab] = useState('radar')
       const [nonce, setNonce] = useState(0)
       const [monitor, setMonitor] = useState('unknown')
@@ -380,6 +466,7 @@ window.__ModuleLoader__.load({
         el.id = 'aihot-radar-style'
         el.textContent = `
           @keyframes aihot-pulse { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.5); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
+          @media (prefers-reduced-motion: reduce) { .aihot-pulse { animation: none !important; } }
           .aihot-radar-panel::-webkit-scrollbar { width: 8px; }
           .aihot-radar-panel::-webkit-scrollbar-track { background: transparent; }
           .aihot-radar-panel::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 8px; }
@@ -398,29 +485,30 @@ window.__ModuleLoader__.load({
           h('div', { style: css.titleWrap },
             h('div', { style: css.iconBadge }, h(RadarIcon, { size: 21 })),
             h('div', null,
-              h('div', { style: css.h1 }, 'AIHOT 雷达', h('span', { style: { ...css.live, background: monitorColor(monitor) }, title: monitorTitle(monitor) })),
-              h('div', { style: css.sub }, 'Codex / Claude / Antigravity 额度重置监控 · AI 资讯日报'))),
-          h('button', { style: css.btn, className: 'aihot-btn', onClick: () => setNonce((n) => n + 1) }, '刷新')),
+              h('div', { style: css.h1 }, t('meta.title'), h('span', { className: 'aihot-pulse', style: { ...css.live, background: monitorColor(monitor) }, title: monitorTitle(monitor), 'aria-hidden': true })),
+              h('div', { style: css.sub }, t('sub')))),
+          h('button', { type: 'button', style: css.btn, className: 'aihot-btn', onClick: () => setNonce((n) => n + 1) }, t('refresh'))),
 
-        h('div', { style: css.tabs },
-          h('button', { style: { ...css.tab, ...(tab === 'radar' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('radar') }, h(RadarIcon, { size: 15 }), '额度雷达'),
-          h('button', { style: { ...css.tab, ...(tab === 'daily' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('daily') }, '📰', '今日日报')),
+        h('div', { style: css.tabs, role: 'tablist' },
+          h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'radar', style: { ...css.tab, ...(tab === 'radar' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('radar') }, h(RadarIcon, { size: 15 }), t('tab.radar')),
+          h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'daily', style: { ...css.tab, ...(tab === 'daily' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('daily') }, '📰', t('tab.daily'))),
 
         tab === 'radar' ? h(RadarContent, { nonce, onMonitor: setMonitor }) : h(DailyReport, { nonce }),
 
         h('div', { style: css.foot },
-          '数据来源', h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: BASE, target: '_blank', rel: 'noreferrer' }, 'AIHOT', h('span', null, '↗')),
-          h('span', { style: { marginLeft: 'auto' } }, '后台雷达自动推送 · webhook 见 state.json')))
+          t('foot.source'), h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: BASE, target: '_blank', rel: 'noreferrer' }, 'AIHOT', h('span', null, '↗')),
+          h('span', { style: { marginLeft: 'auto' } }, t('foot.push'))))
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'locale'],
       apply(ctx) {
+        LOCALE = ctx.locale
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist', id: 'aihot-radar', order: 60, label: 'AIHOT 雷达',
+          name: 'sidebar.panellist', id: 'aihot-radar', order: 60, label: () => tr('meta.title', activeLang()), locale: ctx.locale,
         }, RadarIcon))
         ctx.slots.inject('main', () => ctx.slots.register({
-          name: 'main', key: 'aihot-radar',
+          name: 'main', key: 'aihot-radar', locale: ctx.locale,
         }, RadarPanel))
       },
     }

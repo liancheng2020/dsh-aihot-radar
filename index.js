@@ -27,15 +27,15 @@ const DEFAULT_DIGEST = { enabled: false, time: '08:30' }
 
 export const Config = z.object({
   radar: z.object({
-    enabled: z.boolean().default(true),
-    providers: z.array(z.string()).default([...PROVIDERS]),
-    pollSeconds: z.number().step(1).min(60).max(3600).default(120),
-    notifyAnnounced: z.boolean().default(true),
-    notifyConfirmed: z.boolean().default(true),
+    enabled: z.boolean().default(DEFAULT_RADAR.enabled),
+    providers: z.array(z.string()).default(DEFAULT_RADAR.providers),
+    pollSeconds: z.number().step(1).min(60).max(3600).default(DEFAULT_RADAR.pollSeconds),
+    notifyAnnounced: z.boolean().default(DEFAULT_RADAR.notifyAnnounced),
+    notifyConfirmed: z.boolean().default(DEFAULT_RADAR.notifyConfirmed),
   }).default(DEFAULT_RADAR),
   digest: z.object({
-    enabled: z.boolean().default(false),
-    time: z.string().default('08:30'),
+    enabled: z.boolean().default(DEFAULT_DIGEST.enabled),
+    time: z.string().default(DEFAULT_DIGEST.time),
   }).default(DEFAULT_DIGEST),
 })
 
@@ -96,7 +96,7 @@ export function apply(ctx, config) {
       state.lastResult[p] = { at, ok: true, error: null, pending: r.pending?.length || 0 }
       log?.debug?.(`雷达 ${p} 扫描完成：事件 ${r.events?.length || 0} · 推送 ${r.notified?.length || 0} · 待生效 ${r.pending?.length || 0}`)
     }
-    saveState(state)
+    saveState(state, log)
   }
   const onDigest = (r) => {
     // digest.js already logs warn/error on failure; log success here.
@@ -104,11 +104,11 @@ export function apply(ctx, config) {
   }
 
   ctx.effect(() => startRadar({
-    api: syncApi, state, notifier, config, save: saveState, onScan,
+    api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onScan,
   }))
 
   ctx.effect(() => startDigest({
-    api: syncApi, state, notifier, config, save: saveState, onDigest, logger: log,
+    api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onDigest, logger: log,
   }))
 
   log?.info?.('aihot-radar activated: tools + quota radar + daily digest')
