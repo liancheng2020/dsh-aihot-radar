@@ -30,6 +30,7 @@
   "badge.confirmed": "Confirmed",
   "reset.default": "Quota reset",
   "outage": "Service outage: {t}",
+  "outage.recovered": "recovered",
   "estimate": "Expected: {t}",
   "link.source": "View source",
   "link.sourceShort": "Source",

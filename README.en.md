@@ -18,13 +18,19 @@ A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset 
 
 ## Install
 
-**Desktop**: Settings → Plugins → Add plugin, paste the Release `.tgz` URL or the package name `dsh-aihot-radar`, install and enable.
+**Desktop**: Settings → Plugins → Add plugin, paste the repository address:
+
+```
+github:liancheng2020/dsh-aihot-radar
+```
 
 **Web**:
 ```sh
-dsh plugin --profile web add dsh-aihot-radar
+dsh plugin --profile web add github:liancheng2020/dsh-aihot-radar
 ```
 Restart DSH. The **AIHOT Radar** panel appears in the sidebar.
+
+> The npm package and GitHub Release are not published yet; no `.tgz` direct link is provided here. They will be added once published.
 
 ## Configure push (optional)
 

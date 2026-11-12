@@ -104,7 +104,7 @@ export function apply(ctx, config) {
   }
 
   ctx.effect(() => startRadar({
-    api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onScan,
+    api: syncApi, state, notifier, config, onScan,
   }))
 
   ctx.effect(() => startDigest({

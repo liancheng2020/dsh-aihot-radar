@@ -30,6 +30,7 @@
   "badge.confirmed": "已到账",
   "reset.default": "额度重置",
   "outage": "服务故障公告：{t}",
+  "outage.recovered": "已恢复",
   "estimate": "预计：{t}",
   "link.source": "查看原帖",
   "link.sourceShort": "原帖",

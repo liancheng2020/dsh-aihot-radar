@@ -18,15 +18,19 @@ DSH 插件：**Codex / Claude / Antigravity 额度重置实时推送** + **AI �
 
 ## 装
 
-**桌面端**：设置 → 插件 → 添加插件，填本仓库 Release 的 `.tgz` 直链或包名 `dsh-aihot-radar`，安装后启用。
+**桌面端**：设置 → 插件 → 添加插件，填入仓库地址：
+
+```
+github:liancheng2020/dsh-aihot-radar
+```
 
 **Web 端**：
 ```sh
-dsh plugin --profile web add dsh-aihot-radar
-# 或从 Release 直链：
-dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.1.1/dsh-aihot-radar-0.1.1.tgz
+dsh plugin --profile web add github:liancheng2020/dsh-aihot-radar
 ```
-装完重启 DSH。侧边栏出现 **AIHOT 雷达** 面板即生效。
+装完重启 DSH，侧边栏出现 **AIHOT 雷达** 面板即生效。
+
+> 尚未发布 npm 包与 GitHub Release，本文档不提供 `.tgz` 直链；发布后再补。
 
 ## 配置推送（可选）
 
