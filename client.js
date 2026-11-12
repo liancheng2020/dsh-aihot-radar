@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
         'status.checkedAt': 'AIHOT 核对于 {t}', 'status.refreshedAt': '面板刷新于 {t}',
         'status.askAgent': '后台推送状态可向 Agent 提问（aihot_radar_status）',
         'badge.announced': '预告', 'badge.confirmed': '已到账',
-        'reset.default': '额度重置', 'outage': '服务故障公告：{t}', 'estimate': '预计：{t}',
+        'reset.default': '额度重置', 'outage': '服务故障公告：{t}', 'outage.recovered': '已恢复', 'estimate': '预计：{t}',
         'link.source': '查看原帖', 'link.sourceShort': '原帖',
         'countdown.prefix': '距预计窗口', 'countdown.open': '窗口已开启 · 待确认',
         'unit.day': '天', 'unit.hour': '小时', 'unit.min': '分', 'unit.sec': '秒',
@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
         'status.checkedAt': 'AIHOT checked at {t}', 'status.refreshedAt': 'Panel refreshed at {t}',
         'status.askAgent': 'Ask the agent for push status (aihot_radar_status)',
         'badge.announced': 'Announced', 'badge.confirmed': 'Confirmed',
-        'reset.default': 'Quota reset', 'outage': 'Service outage: {t}', 'estimate': 'Expected: {t}',
+        'reset.default': 'Quota reset', 'outage': 'Service outage: {t}', 'outage.recovered': 'recovered', 'estimate': 'Expected: {t}',
         'link.source': 'View source', 'link.sourceShort': 'Source',
         'countdown.prefix': 'Window opens in', 'countdown.open': 'Window open · unconfirmed',
         'unit.day': 'd', 'unit.hour': 'h', 'unit.min': 'm', 'unit.sec': 's',
@@ -336,6 +336,7 @@ window.__ModuleLoader__.load({
 
     const monitorColor = (m) => m === 'healthy' ? T.success : m === 'delayed' ? T.warn : T.dimmed
     const monitorTitle = (m) => t(m === 'healthy' ? 'monitor.healthy' : m === 'delayed' ? 'monitor.delayed' : 'monitor.unknown')
+    const fmtTime = (iso) => { if (!iso) return ''; try { return new Date(iso).toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) } catch { return String(iso) } }
 
     function ProviderChip({ provider, resp }) {
       const err = resp?._error
@@ -357,7 +358,9 @@ window.__ModuleLoader__.load({
       const post = event.posts?.[0]
       const postUrl = post?.url || (post?.id ? `https://x.com/i/status/${post.id}` : null)
       const target = event.estimate?.from ? Date.parse(event.estimate.from) : (event.schedule?.from ? Date.parse(event.schedule.from) : NaN)
-      const outageText = outage ? (outage.label || outage.message || outage.title || outage.since || outage.at || 'AIHOT') : null
+      const outageText = outage
+        ? ([fmtTime(outage.publishedAt), outage.text || outage.originalText?.slice(0, 40)].filter(Boolean).join(' · ') + (outage.recoveredAt ? ` ${t('outage.recovered')}` : ''))
+        : null
       return h('div', { style: css.hero },
         outageText ? h('div', { style: { fontSize: 11.5, color: T.warn, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 } }, h('span', { style: css.dot(T.warn) }), t('outage', { t: outageText })) : null,
         h('div', { style: css.row },
@@ -434,8 +437,6 @@ window.__ModuleLoader__.load({
         onMonitor(agg)
       }, [data, onMonitor])
 
-      const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) } catch { return iso } }
-
       return h('div', null,
         failed.length ? h('div', { style: css.error }, t('err.partial', { p: failed.join('、') })) : null,
         h('div', { style: css.strip }, PROVIDERS.map((p) => h(ProviderChip, { key: p.id, provider: p, resp: data[p.id] }))),
@@ -505,10 +506,10 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         LOCALE = ctx.locale
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist', id: 'aihot-radar', order: 60, label: () => tr('meta.title', activeLang()), locale: ctx.locale,
+          name: 'sidebar.panellist', id: 'aihot-radar', order: 60, label: () => tr('meta.title', activeLang()), locale: 'aihot-radar',
         }, RadarIcon))
         ctx.slots.inject('main', () => ctx.slots.register({
-          name: 'main', key: 'aihot-radar', locale: ctx.locale,
+          name: 'main', key: 'aihot-radar', locale: 'aihot-radar',
         }, RadarPanel))
       },
     }
