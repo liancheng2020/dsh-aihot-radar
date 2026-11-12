@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "title": "AIHOT 雷达",
+    "description": "Codex/Claude/Antigravity 额度重置实时推送，外加 AIHOT 资讯 Agent 工具。免 Key、零运行时依赖。"
+  },
+  "panel": {
+    "title": "AIHOT 雷达",
+    "nextReset": "下一次预计重置",
+    "noPending": "当前没有待生效的重置预告",
+    "recent": "最近事件",
+    "tools": "资讯工具",
+    "status": "监控状态",
+    "running": "运行中",
+    "stopped": "已停止",
+    "lastCheck": "上次核对",
+    "provider": {
+      "codex": "Codex",
+      "claude": "Claude",
+      "antigravity": "Antigravity"
+    }
+  },
+  "notify": {
+    "announced": "预告",
+    "confirmed": "已到账",
+    "resetTitle": "额度重置提醒",
+    "source": "数据来源"
+  }
+}

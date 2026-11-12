@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "title": "AIHOT Radar",
+    "description": "Real-time Codex/Claude/Antigravity quota-reset alerts plus AIHOT news agent tools. No API key, zero runtime dependencies."
+  },
+  "panel": {
+    "title": "AIHOT Radar",
+    "nextReset": "Next expected reset",
+    "noPending": "No pending reset announcements",
+    "recent": "Recent events",
+    "tools": "News tools",
+    "status": "Monitor status",
+    "running": "Running",
+    "stopped": "Stopped",
+    "lastCheck": "Last check",
+    "provider": {
+      "codex": "Codex",
+      "claude": "Claude",
+      "antigravity": "Antigravity"
+    }
+  },
+  "notify": {
+    "announced": "Announced",
+    "confirmed": "Confirmed",
+    "resetTitle": "Quota reset alert",
+    "source": "Data source"
+  }
+}
