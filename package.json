@@ -14,12 +14,12 @@
     "selftest:client": "node scripts/selftest-client.mjs",
     "verify:dedup": "node scripts/verify-dedup.mjs"
   },
-  "icon": "icon.svg",
+  "icon": "assets/icon-180.png",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./assets/icon-180.png"
   },
   "files": [
     "index.js",
@@ -28,6 +28,8 @@
     "cordis.patch.yml",
     "locale",
     "icon.svg",
+    "assets",
+    "screenshots.json",
     "README.md",
     "README.en.md",
     "LICENSE",
