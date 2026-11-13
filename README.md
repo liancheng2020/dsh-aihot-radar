@@ -16,21 +16,22 @@ DSH 插件：**Codex / Claude / Antigravity 额度重置实时推送** + **AI �
 - **每日日报**：可选，按北京时间定时从 AIHOT **JSON 接口**拉日报，推送并归档到本地。超长自动分条发送；推送失败 10 分钟后重试，当天最多 3 次。
 - **侧边栏面板**：实时看待生效预告、最近事件、工具清单，显示 AIHOT 核对时间与监控状态（纯前端取数）。
 
-## 装
+## 安装
 
-**桌面端**：设置 → 插件 → 添加插件，填入仓库地址：
-
-```
-github:liancheng2020/dsh-aihot-radar
-```
+**桌面端**：设置 → 插件 → 添加插件，填入包名 `dsh-aihot-radar`（npm）或仓库地址 `github:liancheng2020/dsh-aihot-radar`，安装后启用。
 
 **Web 端**：
 ```sh
+# npm（已发布，推荐）
+dsh plugin --profile web add dsh-aihot-radar
+# 或从 GitHub 仓库直装
 dsh plugin --profile web add github:liancheng2020/dsh-aihot-radar
+# 或从 Release 直链安装预构建包
+dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.1.2/dsh-aihot-radar-0.1.2.tgz
 ```
 装完重启 DSH，侧边栏出现 **AIHOT 雷达** 面板即生效。
 
-> 尚未发布 npm 包与 GitHub Release，本文档不提供 `.tgz` 直链；发布后再补。
+> npm 已发布 `dsh-aihot-radar@0.1.2`，GitHub Release `v0.1.2` 亦已发布（含预构建 `.tgz`）。
 
 ## 配置推送（可选）
 
