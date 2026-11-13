@@ -60,7 +60,7 @@
   "tool.story": "Event timeline",
   "tool.resets": "Quota-reset records",
   "tools.copied": "Sample question copied · paste it in chat to invoke",
-  "tools.copiedTitle": "Sample question copied",
+  "tools.copiedTitle": "Sample question copied, ",
   "tools.copiedBody": "Paste it in chat to invoke",
   "tools.copiedShort": "Copied ✓",
   "tools.copyFail": "Copy failed, copy manually: ",

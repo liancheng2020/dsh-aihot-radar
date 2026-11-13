@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
         'err.partial': '部分来源读取失败：{p} · 其余数据仍可用',
         'tool.latest': '最近 AI 重点资讯', 'tool.search': '关键词搜索资讯', 'tool.hot': '当前 AI 热榜',
         'tool.daily': 'AIHOT 日报', 'tool.report': '周报 / 月报', 'tool.story': '热点事件时间线', 'tool.resets': '额度重置记录',
-        'tools.copied': '已复制示例问句 · 去对话粘贴即可调用', 'tools.copiedTitle': '已复制示例问句', 'tools.copiedBody': '去对话粘贴即可调用', 'tools.copiedShort': '已复制 ✓', 'tools.copyFail': '复制失败，请手动复制：',
+        'tools.copied': '已复制示例问句 · 去对话粘贴即可调用', 'tools.copiedTitle': '已复制示例问句，', 'tools.copiedBody': '去对话粘贴即可调用', 'tools.copiedShort': '已复制 ✓', 'tools.copyFail': '复制失败，请手动复制：',
         'sec.push': '推送通道', 'push.channel': 'webhook 通道：{c}', 'push.on': '已配置', 'push.off': '未配置',
         'push.hint': '配置 webhook 后，预告/到账与 AI 日报将推送到你的 IM。',
         'push.test': '发送测试推送', 'push.testing': '发送中…', 'push.testOk': '测试推送成功，通道正常。', 'push.testFail': '测试推送失败：{e}',
@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
         'err.partial': 'Some sources failed: {p} · other data still available',
         'tool.latest': 'Latest AI highlights', 'tool.search': 'Keyword news search', 'tool.hot': 'Current AI trending',
         'tool.daily': 'AIHOT daily', 'tool.report': 'Weekly / monthly', 'tool.story': 'Event timeline', 'tool.resets': 'Quota-reset records',
-        'tools.copied': 'Sample question copied · paste it in chat to invoke', 'tools.copiedTitle': 'Sample question copied', 'tools.copiedBody': 'Paste it in chat to invoke', 'tools.copiedShort': 'Copied ✓', 'tools.copyFail': 'Copy failed, copy manually: ',
+        'tools.copied': 'Sample question copied · paste it in chat to invoke', 'tools.copiedTitle': 'Sample question copied, ', 'tools.copiedBody': 'paste it in chat to invoke', 'tools.copiedShort': 'Copied ✓', 'tools.copyFail': 'Copy failed, copy manually: ',
         'sec.push': 'Push channel', 'push.channel': 'webhook channel: {c}', 'push.on': 'Configured', 'push.off': 'Not set',
         'push.hint': 'With a webhook, announcements / confirmations and the AI digest push to your IM.',
         'push.test': 'Send test push', 'push.testing': 'Sending…', 'push.testOk': 'Test push succeeded; channel works.', 'push.testFail': 'Test push failed: {e}',
@@ -206,19 +206,23 @@ window.__ModuleLoader__.load({
       mdHr: { border: 'none', borderTop: `1px solid ${T.borderSoft}`, margin: '16px 0' },
     }
 
-    // Toast anchor: bottom-center of the sidebar panel, so the message floats
-    // over the panel near the click but takes no layout space inside it.
+    // Toast anchor: floats at the top of the panel, centered. Fixed positioning
+    // keeps it out of the panel's layout flow, so it never shifts content.
     function toastAnchor() {
-      const fallback = { left: '50%', bottom: 24 }
+      const fallback = { position: 'fixed', left: '50%', top: 16, transform: 'translateX(-50%)', zIndex: 999, pointerEvents: 'none' }
       if (typeof document === 'undefined' || typeof window === 'undefined') return fallback
       try {
-        const el = document.querySelector('.aihot-radar-panel')
-        const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null
-        if (!r || !r.width) return fallback
+        const panel = document.querySelector('.aihot-radar-panel')
+        const pr = panel && panel.getBoundingClientRect ? panel.getBoundingClientRect() : null
+        if (!pr || !pr.width) return fallback
         return {
-          left: Math.round(r.left + r.width / 2),
-          bottom: Math.max(12, Math.round(window.innerHeight - r.bottom + 16)),
-          maxWidth: Math.max(200, Math.round(r.width - 28)),
+          position: 'fixed',
+          left: Math.round(pr.left + pr.width / 2),
+          top: Math.max(8, Math.round(pr.top + 14)),
+          maxWidth: Math.max(200, Math.round(pr.width - 28)),
+          transform: 'translateX(-50%)',
+          zIndex: 999,
+          pointerEvents: 'none',
         }
       } catch { return fallback }
     }
@@ -455,7 +459,7 @@ window.__ModuleLoader__.load({
           setCopied(ok ? name : null)
           setToast({
             ok,
-            title: ok ? t('tools.copiedTitle') : t('tools.copyFail').replace(/[：:]\s*$/, ''),
+            title: ok ? t('tools.copiedTitle') : t('tools.copyFail'),
             body: ok ? t('tools.copiedBody') : q,
             n: Date.now(),
           })
@@ -612,10 +616,7 @@ window.__ModuleLoader__.load({
       const [monitor, setMonitor] = useState('unknown')
 
       useEffect(() => {
-        if (document.getElementById('aihot-radar-style')) return
-        const el = document.createElement('style')
-        el.id = 'aihot-radar-style'
-        el.textContent = `
+        const sheet = `
           @keyframes aihot-pulse { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.5); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
           @media (prefers-reduced-motion: reduce) { .aihot-pulse { animation: none !important; } .aihot-toast { animation: none !important; } }
           .aihot-radar-panel::-webkit-scrollbar { width: 8px; }
@@ -630,16 +631,25 @@ window.__ModuleLoader__.load({
           .aihot-tool:active { transform: scale(0.98); }
           .aihot-tool-copied { border-color: ${T.success}; background: ${T.layer2}; }
           .aihot-toast { position: fixed; z-index: 999; pointer-events: none; display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; max-width: 80vw; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; transform: translateX(-50%); animation: aihot-toast-in .2s ease; }
-          .aihot-toast-ok { background: rgba(52,199,89,0.14); border: 1px solid rgba(52,199,89,0.55); color: ${T.text}; box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
-          .aihot-toast-err { background: rgba(255,77,79,0.12); border: 1px solid rgba(255,77,79,0.55); color: ${T.text}; }
+          /* Alpha tints + theme label tokens, so both light and dark themes stay readable. */
+          .aihot-toast-ok { background: rgba(52,199,89,0.16); border: 1px solid rgba(52,199,89,0.65); color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }
+          .aihot-toast-err { background: rgba(255,77,79,0.14); border: 1px solid rgba(255,77,79,0.65); color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }
           .aihot-toast-icon { width: 18px; height: 18px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #0e0e11; background: ${T.success}; margin-top: 1px; }
           .aihot-toast-err .aihot-toast-icon { background: ${T.error}; color: #fff; }
-          .aihot-toast-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+          .aihot-toast-body { min-width: 0; }
           .aihot-toast-title { font-weight: 650; font-size: 12.5px; }
-          .aihot-toast-sub { font-size: 11.5px; color: ${T.sub}; word-break: break-word; }
+          .aihot-toast-sub { font-size: 12.5px; color: ${T.sub}; word-break: break-word; }
           @keyframes aihot-toast-in { from { opacity: 0; transform: translate(-50%, 8px) scale(0.98); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
         `
-        document.head.appendChild(el)
+        let el = document.getElementById('aihot-radar-style')
+        if (!el) {
+          el = document.createElement('style')
+          el.id = 'aihot-radar-style'
+          document.head.appendChild(el)
+        }
+        // Always resync: a plugin hot-reload reuses the previous <style> node,
+        // and a stale sheet would leave new classes (e.g. .aihot-toast) unstyled.
+        if (el.textContent !== sheet) el.textContent = sheet
       }, [])
 
       return h('div', { style: css.panel, className: 'aihot-radar-panel' },

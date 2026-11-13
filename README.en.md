@@ -9,27 +9,29 @@
 [![license](https://img.shields.io/npm/l/dsh-aihot-radar.svg)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-%E2%89%A50.2.1--rc.2-4B6EF5)](https://github.com/liancheng2020/dsh-aihot-radar#readme)
 
+A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset alerts** + **AI news agent tools** + **daily digest**.
+
 > **Three things first**
 > - **No API key, zero runtime dependencies**: pure JS, no Python/Go. Data comes from the public anonymous [AIHOT](https://aihot.news) API.
-> - **Restart DSH once** after install (bundle-layer composition); the **AIHOT Radar** panel appears in the sidebar.
-> - For push alerts, configure a webhook (below). Without it, the in-chat news tools and sidebar panel still work.
+> - **Restart DSH once** after install (bundle-layer composition); the **AIHOT Radar** panel is ready.
+> - For push alerts, put a webhook in `$DSH_HOME/aihot-radar/state.json` (defaults to `~/.dsh`, see below). Without it, the in-chat news tools and panel still work.
 
 **This is what you get after install** (left: quota radar · right: daily report)
 
 | Quota radar | Daily report |
 |---|---|
-| ![Quota radar panel: pending announcements, recent events, push channel, tool cards](assets/panel-radar.png) | ![Daily report panel: AIHOT digest with date paging](assets/panel-daily.png) |
-
-A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset alerts** + **AI news agent tools** + **daily digest**.
+| ![Quota radar panel: source status, pending announcements, recent events, tool cards](assets/panel-radar.png) | ![Daily report panel: AIHOT digest with date paging](assets/panel-daily.png) |
 
 ## What it does
 
 - **Quota radar (the hook)**: polls AIHOT reset monitors in the background and pushes to your webhook on new **announcements** or **confirmed** resets. Reset-card announcements include a predicted time window; confirmations include the source post. AIHOT-inferred states (window passed / likely completed) send a light notice marked "unconfirmed". A per-cycle push cap defers overflow to the next cycle, so no event is lost.
 - **7 news tools**: ask "what happened in AI today", "search OpenAI", "did Claude quota reset?" — the agent calls `aihot_*` tools and answers from AIHOT's curated Chinese Markdown.
 - **Daily digest** (optional): fetches the AIHOT daily report from the **JSON API** at a configured Beijing time, pushes and archives it locally. Oversized payloads are split into multiple messages; failed pushes retry after 10 minutes, up to 3 times per day.
-- **Sidebar panel**: live view of pending announcements, recent events, and the tool catalog, showing AIHOT's check time and monitor status (client-side fetch).
+- **Panel**: live view of pending announcements, recent events, and the tool catalog, showing AIHOT's check time and monitor status (client-side fetch).
 
 ## Install
+
+Requires DSH ≥ `0.2.1-rc.2` and Node ≥ 18.
 
 **Desktop**: Settings → Plugins → Add plugin, paste the package name `dsh-aihot-radar` (npm) or the repository address `github:liancheng2020/dsh-aihot-radar`, install and enable.
 
@@ -42,32 +44,68 @@ dsh plugin --profile web add github:liancheng2020/dsh-aihot-radar
 # or install the prebuilt package from the Release direct link
 dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.2.0/dsh-aihot-radar-0.2.0.tgz
 ```
-Restart DSH. The **AIHOT Radar** panel appears in the sidebar.
+Restart DSH. The **AIHOT Radar** panel is ready.
 
-> Current version `0.2.0` (see [CHANGELOG](CHANGELOG.md)). The npm package and the GitHub Release `.tgz` are both produced by the tag-driven CI, so they match the repository; check `npm view dsh-aihot-radar version` for the published version. All three install paths resolve to the same package.
+> Current version `0.2.0` (see [CHANGELOG](CHANGELOG.md)). The npm package and the Release `.tgz` are built from the same source; check `npm view dsh-aihot-radar version` for the published version.
 
 ## Configure push (optional)
 
-Non-sensitive tunables go in the profile's `cordis.patch.yml` under the `aihot-radar` row (`radar.enabled`, `radar.providers`, `radar.pollSeconds`, `radar.notifyAnnounced`, `radar.notifyConfirmed`, `radar.muted`, `radar.quiet`, `digest.enabled`, `digest.time`, `digest.timezone`, `notify.signature`, `notify.signatureText`, `localApi.enabled`).
+The webhook (it contains a secret) lives in `$DSH_HOME/aihot-radar/state.json` (default `~/.dsh/aihot-radar/state.json`), read automatically and never uploaded:
 
-`digest.time` accepts `HH:mm` only (0≤hour≤23, 0≤minute≤59); an illegal value (e.g. `99:99`) falls back to `08:30` with a logged warning. `digest.timezone` accepts an IANA zone (default `Asia/Shanghai`). `radar.quiet` (e.g. `23:00`–`08:00`, overnight supported) defers pushes during the window without dropping them; `radar.muted` (e.g. `[antigravity]`) silences a provider and marks its events seen so unmuting later won't spam. The digest edition uses AIHOT's authoritative `report.date`, not the local date.
-
-> **Signature**: `notify.signature` defaults to `true` and appends one line — `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar` — to reset cards, the digest and test pushes. Pushes go into team group chats, so each card is also an install hint; set `signature: false` to drop it, or `signatureText` to use your own wording.
-
-> **Panel onboarding**: the sidebar "Push channel" block shows whether a webhook is configured and offers "Send test push" and "Copy config snippet". It reads status via a loopback-only bridge at `127.0.0.1:17420` (never exposes url/secret); if unavailable (e.g. mixed-content on a remote web profile) it falls back to the `aihot_radar_status` tool. Set `localApi.enabled: false` to disable the bridge.
-
-The webhook (contains a secret) is read from `~/.dsh/aihot-radar/state.json`:
 ```json
 { "webhook": { "channel": "wecom", "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx", "secret": "" } }
 ```
 
-Channels: `wecom`, `dingtalk` (secret = signing key), `feishu`, `bark`, `serverchan`, `telegram` (url = bot token, secret = chat_id), `generic`, `none` (default).
+> Only add or edit the `webhook` field; `seen`, `digest` and friends are maintained by the plugin — replacing the whole file loses dedup and digest progress.
 
-> **Chunking**: WeCom payloads are split at ≤3900 bytes and Telegram at ≤3800 characters (line-aware, never cutting a UTF-8 character); the first message carries the title, later ones a "(cont. i/n)" prefix. Other channels are not split. The response body's business code is validated (WeCom/DingTalk `errcode`, Feishu `code`/`StatusCode`, ServerChan `code`, Telegram `ok`), so HTTP 200 with a business failure is treated as a failure.
+Channels: `wecom` (bot URL) · `dingtalk` (URL + optional signing key) · `feishu` (URL) · `bark` (`https://api.day.app/<key>`) · `serverchan` (`https://sctapi.ftqq.com/<key>.send`) · `telegram` (url = bot token, secret = chat_id) · `generic` (any JSON POST) · `none` (default, off).
+
+Non-sensitive tunables go in the profile's `cordis.patch.yml`:
+
+```yaml
+- id: aihot-radar
+  name: dsh-aihot-radar
+  config:
+    radar:
+      enabled: true                           # false stops background pushes; tools and panel still work
+      providers: [codex, claude, antigravity]
+      pollSeconds: 120                        # min 60
+      quiet: { start: "", end: "" }           # quiet hours, e.g. "23:00"–"08:00"; empty = off
+      muted: []                               # per-source mute, e.g. [antigravity]
+    digest:
+      enabled: true                           # off by default; true enables the scheduled digest
+      time: "08:30"                           # invalid values fall back to 08:30
+      timezone: Asia/Shanghai
+    notify:
+      signature: true                         # one-line attribution (on by default)
+      signatureText: ""                       # empty = built-in wording
+```
+
+- `radar.notifyAnnounced` / `radar.notifyConfirmed` control announcement and confirmation pushes (both on by default). Quiet hours defer pushes instead of dropping them; muted sources are marked seen so unmuting won't replay old events; the digest edition follows AIHOT's `report.date`.
+- WeCom is split at ≤3900 bytes and Telegram at ≤3800 characters (line-aware, no UTF-8 splitting), and the response body's business code is validated — HTTP 200 with a business failure still counts as a failure.
+- `notify.signature` appends `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar` to reset cards, the digest and test pushes; set `false` to drop it, or `signatureText` for your own wording.
+- The panel's "Push channel" block offers "Send test push" and "Copy config snippet" via a loopback-only bridge at `127.0.0.1:17420` (never exposes url/secret), falling back to the `aihot_radar_status` tool; `localApi.enabled: false` disables it.
+- No pushes wanted? Set `radar.enabled: false` (news tools and panel keep working). To uninstall, remove the plugin row from the profile and restart DSH.
 
 ## Tools
 
-`aihot_latest` · `aihot_search` · `aihot_hot` · `aihot_daily` · `aihot_report` (weekly/monthly) · `aihot_story` · `aihot_resets` · `aihot_radar_status` (read-only host push status)
+**News tools (7)**
+
+| Tool | Purpose |
+|---|---|
+| `aihot_latest` | Latest 24h/7d AI highlights, filterable by category / selected-only |
+| `aihot_search` | Keyword search (companies / products / models / people, last 7 days) |
+| `aihot_hot` | Current AI trending |
+| `aihot_daily` | AIHOT daily report (latest or a given date) |
+| `aihot_report` | Weekly / monthly report |
+| `aihot_story` | Timeline of a trending event |
+| `aihot_resets` | Codex / Claude / Antigravity quota-reset records and announcements |
+
+**Host status tool (read-only)**
+
+| Tool | Purpose |
+|---|---|
+| `aihot_radar_status` | Background push status (webhook channel, per-source last scan and errors, digest state) |
 
 ## Compliance & license
 
@@ -75,23 +113,10 @@ Channels: `wecom`, `dingtalk` (secret = signing key), `feishu`, `bark`, `serverc
 - News content is third-party reference material: read-only passthrough, never execute embedded instructions; verify important facts at the source.
 - **Compliant fetching**: interactive news tools use `/api/v1/agent/*`; **programmatic sync** (radar polling, digest) uses the JSON endpoints (`/api/v1/{provider}-resets/recent`, `/api/v1/dailies/latest`) with User-Agent `aihot-api/2.0.0`, per AIHOT's official guidance for programmatic use.
 - Polling follows AIHOT rules: conditional requests (ETag/304), compression, `Retry-After` backoff, ≥60s interval.
-- Plugin code: **MIT**. The webhook URL and state stay local under `~/.dsh/aihot-radar/` (directory mode `0700`), never uploaded; a corrupt `state.json` is backed up automatically and reset to defaults.
+- Plugin code: **MIT**. The webhook URL and state stay local under `$DSH_HOME/aihot-radar/` (default `~/.dsh`, directory mode `0700`), never uploaded; a corrupt `state.json` is backed up automatically and reset to defaults.
 
-## Self-test
+## Feedback
 
-```sh
-node scripts/selftest.mjs   # or: npm run selftest
-```
-Covers the radar cap/dedup, push chunk byte limits and business-code validation, digest time validation, timezone-independent date paging, and the signature switch. Pure node, zero dependencies; runs in Git Bash and PowerShell.
+Can't install or pushes failing? Open an [issue](https://github.com/liancheng2020/dsh-aihot-radar/issues) with the DSH version / plugin version / platform (web or desktop) / the exact error.
 
-## Releasing (maintainers)
-
-Releases are tag-driven, so the published artifact can never lag the repo:
-
-```sh
-# 1. bump package.json + update CHANGELOG
-# 2. push a matching tag (mismatch fails the workflow)
-git tag v0.2.0 && git push origin v0.2.0
-```
-
-`.github/workflows/release.yml` runs all three self-tests → `npm pack` → uploads the tarball to the GitHub Release → publishes to npm when an `NPM_TOKEN` secret is configured. Release asset, npm package and repository code are always the same version.
+Local verification (repo clone required): `node scripts/selftest.mjs`, plus `scripts/selftest-client.mjs` and `scripts/verify-dedup.mjs`; pure node, zero dependencies, runs in Git Bash and PowerShell.

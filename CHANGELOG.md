@@ -5,8 +5,6 @@ All notable changes to this project are documented here. Format follows
 
 ## [0.2.0] - 2026-11-13
 
-> `0.1.3` 从未单独发布，其改动已整体并入本版；发布线为 `0.1.2` → `0.2.0`。
-
 ### Added
 - **推送署名（默认开启）**：额度重置卡片、AI 日报与测试推送尾部加一行 `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar`。推送落在团队群里，每条即一次安装入口；`notify.signature: false` 关闭，`notify.signatureText` 换自定义文案。
 - **tag 驱动发布**：`.github/workflows/release.yml` 在 `v*` tag 上校验版本一致性、跑三套自测、`npm pack` 出 tarball 并上传 GitHub Release，配置 `NPM_TOKEN` 时同时发布 npm。杜绝「仓库新、包旧」。
@@ -20,16 +18,17 @@ All notable changes to this project are documented here. Format follows
 - 共享时区模块 `lib/time.js`；本地桥接 `lib/localapi.js`。
 
 ### Changed
-- 版本号 `0.1.3` → `0.2.0`，npm 与 Release 重新打包发布（补齐本轮图标、工具卡片、标签图标与 README 优化，下载即最新）。
+- 版本号 `0.1.2` → `0.2.0`，npm 与 Release 重新打包发布（补齐图标、工具卡片、标签图标与 README 优化，下载即最新）。
 - 资讯工具卡片改为可点击：复制示例问句并给出「去对话粘贴即可调用」的引导。
-- 复制反馈改为面板底部**浮动 toast**（✓ 图标 + 标题 + 说明，成功/失败两种配色），2s 自动消失，`position: fixed` 不占面板布局、不遮挡点击。
+- 复制反馈改为**浮动 toast**（✓ 图标 + 单行标题与说明，成功/失败两种配色），定位在面板顶部居中，2s 自动消失，`position: fixed` 不占面板布局、不遮挡点击；配色用透明色叠主题文字变量，浅色/深色模式都清晰。
 - 面板分区标题统一使用同一色阶（`T.sub`，与计数徽章一致），消除「推送通道」因无计数徽章而显得更淡的观感。
 - 标签图标平衡：额度雷达图标放大至与今日日报相当。
 - README 标语去叠词（"每日日报"→"AI 日报"），GitHub About 对齐。
 - 扩充 npm keywords 与 GitHub topics 提升搜索发现。
 
 ### Fixed
-- 复制提示曾固定在窗口底部，远离点击位置且看起来像面板正文；已改为锚定面板底部的浮动 toast。
+- 复制提示曾固定在窗口底部，远离点击位置且看起来像面板正文；已改为面板顶部居中的浮动 toast。
+- 面板样式表按 id 缓存后不再更新，插件热更新时新增样式（如 toast）不生效、退化成面板正文；改为每次挂载强制同步样式内容。
 - 客户端自测 B7 与真实日期解耦（冻结"最新期"计算），不再随日历变红。
 
 ## [0.1.2] - 2026-11-12

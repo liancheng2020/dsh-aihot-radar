@@ -60,7 +60,7 @@
   "tool.story": "热点事件时间线",
   "tool.resets": "额度重置记录",
   "tools.copied": "已复制示例问句 · 去对话粘贴即可调用",
-  "tools.copiedTitle": "已复制示例问句",
+  "tools.copiedTitle": "已复制示例问句，",
   "tools.copiedBody": "去对话粘贴即可调用",
   "tools.copiedShort": "已复制 ✓",
   "tools.copyFail": "复制失败，请手动复制：",
