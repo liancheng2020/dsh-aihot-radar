@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Zero runtime dependencies: self-tests run on plain node, no install needed.
+      - name: Server self-test (radar / notify / digest / quiet / tz / bridge)
+        run: node scripts/selftest.mjs
+      - name: Client self-test (panel / tools / push / i18n)
+        run: node scripts/selftest-client.mjs
+      - name: Dedup verification
+        run: node scripts/verify-dedup.mjs

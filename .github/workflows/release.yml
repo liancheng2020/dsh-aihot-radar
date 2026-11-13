@@ -1,0 +1,71 @@
+name: Release
+
+# Tag-driven release so the published artifact can never lag the repo:
+# push a tag v<x.y.z> whose version matches package.json, and this workflow
+# runs the self-tests, packs the tarball, uploads it to the GitHub Release and
+# (when NPM_TOKEN is configured) publishes to npm.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Check tag matches package.json
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag $TAG_VERSION does not match package.json $PKG_VERSION"
+            exit 1
+          fi
+          echo "PKG_VERSION=$PKG_VERSION" >> "$GITHUB_ENV"
+
+      - name: Self-tests
+        run: |
+          node scripts/selftest.mjs
+          node scripts/selftest-client.mjs
+          node scripts/verify-dedup.mjs
+
+      - name: Pack tarball
+        run: |
+          npm pack
+          ls -l "dsh-aihot-radar-${PKG_VERSION}.tgz"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-aihot-radar-${{ env.PKG_VERSION }}.tgz
+          generate_release_notes: true
+          body: |
+            安装 / Install：
+
+            ```sh
+            # Release 直链
+            dsh plugin --profile web add https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/dsh-aihot-radar-${{ env.PKG_VERSION }}.tgz
+            # npm
+            dsh plugin --profile web add dsh-aihot-radar
+            # GitHub 仓库
+            dsh plugin --profile web add github:${{ github.repository }}
+            ```
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::NPM_TOKEN not set, skipping npm publish"
+            exit 0
+          fi
+          npm publish --access public

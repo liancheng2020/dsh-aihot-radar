@@ -12,6 +12,7 @@ import { createNotifier } from './lib/notify.js'
 import { registerTools } from './lib/tools.js'
 import { startRadar } from './lib/radar.js'
 import { startDigest } from './lib/digest.js'
+import { startLocalApi } from './lib/localapi.js'
 
 export const name = 'aihot-radar'
 export const inject = ['tools']
@@ -22,8 +23,11 @@ const DEFAULT_RADAR = {
   pollSeconds: 120,
   notifyAnnounced: true,
   notifyConfirmed: true,
+  muted: [],
+  quiet: { start: '', end: '' },
 }
-const DEFAULT_DIGEST = { enabled: false, time: '08:30' }
+const DEFAULT_DIGEST = { enabled: false, time: '08:30', timezone: 'Asia/Shanghai' }
+const DEFAULT_NOTIFY = { signature: true, signatureText: '' }
 
 export const Config = z.object({
   radar: z.object({
@@ -32,11 +36,24 @@ export const Config = z.object({
     pollSeconds: z.number().step(1).min(60).max(3600).default(DEFAULT_RADAR.pollSeconds),
     notifyAnnounced: z.boolean().default(DEFAULT_RADAR.notifyAnnounced),
     notifyConfirmed: z.boolean().default(DEFAULT_RADAR.notifyConfirmed),
+    muted: z.array(z.string()).default(DEFAULT_RADAR.muted),
+    quiet: z.object({
+      start: z.string().default(''),
+      end: z.string().default(''),
+    }).default(DEFAULT_RADAR.quiet),
   }).default(DEFAULT_RADAR),
   digest: z.object({
     enabled: z.boolean().default(DEFAULT_DIGEST.enabled),
     time: z.string().default(DEFAULT_DIGEST.time),
+    timezone: z.string().default(DEFAULT_DIGEST.timezone),
   }).default(DEFAULT_DIGEST),
+  notify: z.object({
+    signature: z.boolean().default(DEFAULT_NOTIFY.signature),
+    signatureText: z.string().default(DEFAULT_NOTIFY.signatureText),
+  }).default(DEFAULT_NOTIFY),
+  localApi: z.object({
+    enabled: z.boolean().default(true),
+  }).default({ enabled: true }),
 })
 
 const SAFETY_SECTION = [
@@ -69,6 +86,9 @@ export function apply(ctx, config) {
       lastCheck: state.lastCheck || {},
       lastResult: state.lastResult || {},
       digest: state.digest || {},
+      radar: { quiet: config.radar?.quiet || { start: '', end: '' }, muted: config.radar?.muted || [] },
+      digestCfg: { timezone: config.digest?.timezone || 'Asia/Shanghai', time: config.digest?.time || '08:30' },
+      notify: { signature: config.notify?.signature !== false },
     }, null, 2),
   }))
 
@@ -110,6 +130,11 @@ export function apply(ctx, config) {
   ctx.effect(() => startDigest({
     api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onDigest, logger: log,
   }))
+
+  // Loopback bridge for the sidebar panel (status + test push). Optional.
+  if (config.localApi?.enabled !== false) {
+    ctx.effect(() => startLocalApi({ state, notifier, config, logger: log }))
+  }
 
   log?.info?.('aihot-radar activated: tools + quota radar + daily digest')
 }

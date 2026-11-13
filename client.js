@@ -11,6 +11,8 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useMemo } = React
 
     const BASE = 'https://aihot.news'
+    const LOCAL_API = 'http://127.0.0.1:17420'
+    const REPO = 'https://github.com/liancheng2020/dsh-aihot-radar'
     // Keep in sync with lib/api.js PROVIDERS.
     const PROVIDERS = [
       { id: 'codex', label: 'Codex' },
@@ -26,6 +28,16 @@ window.__ModuleLoader__.load({
       ['aihot_story', 'tool.story'],
       ['aihot_resets', 'tool.resets'],
     ]
+    const SAMPLE = {
+      aihot_latest: ['今天 AI 圈发生了什么？', 'What happened in AI today?'],
+      aihot_search: ['帮我搜一下关于「大模型 价格」的 AI 资讯', 'Search AI news about "LLM pricing"'],
+      aihot_hot: ['现在 AI 热榜上有哪些话题？', 'What is on the AI hot list right now?'],
+      aihot_daily: ['给我今天的 AIHOT 日报', 'Give me today\'s AIHOT daily digest'],
+      aihot_report: ['生成本周的 AI 周报', 'Generate this week\'s AI weekly report'],
+      aihot_story: ['梳理一下最近热点事件的时间线', 'Build a timeline of the recent hot story'],
+      aihot_resets: ['查一下 Codex / Claude 的额度重置记录', 'Show Codex / Claude quota reset history'],
+    }
+    const sampleQuestion = (name) => (SAMPLE[name] || ['', ''])[LANG === 'en' ? 1 : 0]
 
     const L = {
       zh: {
@@ -38,7 +50,7 @@ window.__ModuleLoader__.load({
         'chip.hasPending': '有重置预告', 'chip.noPending': '近 7 天无预告', 'chip.delayed': '数据延迟', 'chip.failed': '读取失败',
         'sec.pending': '待生效预告', 'sec.recent': '最近事件', 'sec.tools': '资讯工具',
         'empty.pending': '当前没有待生效的重置预告', 'empty.loading': '加载中…', 'empty.recent': '近 7 天无记录',
-        'tools.hint': '在对话中直接提问即可调用，例如「今天 AI 圈发生了什么」',
+        'tools.hint': '点击卡片复制示例问句，去对话粘贴即可调用；也可直接提问，例如「今天 AI 圈发生了什么」',
         'status.checkedAt': 'AIHOT 核对于 {t}', 'status.refreshedAt': '面板刷新于 {t}',
         'status.askAgent': '后台推送状态可向 Agent 提问（aihot_radar_status）',
         'badge.announced': '预告', 'badge.confirmed': '已到账',
@@ -53,6 +65,13 @@ window.__ModuleLoader__.load({
         'err.partial': '部分来源读取失败：{p} · 其余数据仍可用',
         'tool.latest': '最近 AI 重点资讯', 'tool.search': '关键词搜索资讯', 'tool.hot': '当前 AI 热榜',
         'tool.daily': 'AIHOT 日报', 'tool.report': '周报 / 月报', 'tool.story': '热点事件时间线', 'tool.resets': '额度重置记录',
+        'tools.copied': '已复制示例问句 · 去对话粘贴即可调用', 'tools.copiedTitle': '已复制示例问句', 'tools.copiedBody': '去对话粘贴即可调用', 'tools.copiedShort': '已复制 ✓', 'tools.copyFail': '复制失败，请手动复制：',
+        'sec.push': '推送通道', 'push.channel': 'webhook 通道：{c}', 'push.on': '已配置', 'push.off': '未配置',
+        'push.hint': '配置 webhook 后，预告/到账与 AI 日报将推送到你的 IM。',
+        'push.test': '发送测试推送', 'push.testing': '发送中…', 'push.testOk': '测试推送成功，通道正常。', 'push.testFail': '测试推送失败：{e}',
+        'push.copyConfig': '复制配置片段', 'push.copied': '配置片段已复制', 'push.copyFail': '复制失败，请手动复制',
+        'push.bridge': '宿主桥接不可用（web 端可能受限）。可用 aihot_radar_status 工具查询推送状态。',
+        'foot.feedback': '反馈/报障',
       },
       en: {
         'meta.title': 'AIHOT Radar',
@@ -64,7 +83,7 @@ window.__ModuleLoader__.load({
         'chip.hasPending': 'Reset pending', 'chip.noPending': 'No pending in 7 days', 'chip.delayed': 'Data delayed', 'chip.failed': 'Failed to load',
         'sec.pending': 'Pending announcements', 'sec.recent': 'Recent events', 'sec.tools': 'News tools',
         'empty.pending': 'No pending reset announcements', 'empty.loading': 'Loading…', 'empty.recent': 'No records in 7 days',
-        'tools.hint': 'Ask in chat to invoke, e.g. "what happened in AI today"',
+        'tools.hint': 'Click a card to copy a sample question, then paste it in chat; or just ask, e.g. "what happened in AI today"',
         'status.checkedAt': 'AIHOT checked at {t}', 'status.refreshedAt': 'Panel refreshed at {t}',
         'status.askAgent': 'Ask the agent for push status (aihot_radar_status)',
         'badge.announced': 'Announced', 'badge.confirmed': 'Confirmed',
@@ -79,6 +98,13 @@ window.__ModuleLoader__.load({
         'err.partial': 'Some sources failed: {p} · other data still available',
         'tool.latest': 'Latest AI highlights', 'tool.search': 'Keyword news search', 'tool.hot': 'Current AI trending',
         'tool.daily': 'AIHOT daily', 'tool.report': 'Weekly / monthly', 'tool.story': 'Event timeline', 'tool.resets': 'Quota-reset records',
+        'tools.copied': 'Sample question copied · paste it in chat to invoke', 'tools.copiedTitle': 'Sample question copied', 'tools.copiedBody': 'Paste it in chat to invoke', 'tools.copiedShort': 'Copied ✓', 'tools.copyFail': 'Copy failed, copy manually: ',
+        'sec.push': 'Push channel', 'push.channel': 'webhook channel: {c}', 'push.on': 'Configured', 'push.off': 'Not set',
+        'push.hint': 'With a webhook, announcements / confirmations and the AI digest push to your IM.',
+        'push.test': 'Send test push', 'push.testing': 'Sending…', 'push.testOk': 'Test push succeeded; channel works.', 'push.testFail': 'Test push failed: {e}',
+        'push.copyConfig': 'Copy config snippet', 'push.copied': 'Config snippet copied', 'push.copyFail': 'Copy failed, copy manually',
+        'push.bridge': 'Host bridge unavailable (may be limited on web). Use the aihot_radar_status tool for push status.',
+        'foot.feedback': 'Feedback',
       },
     }
 
@@ -138,7 +164,10 @@ window.__ModuleLoader__.load({
       chipVal: { fontSize: 18, fontWeight: 650, color: T.text, lineHeight: 1.2 },
       chipMeta: { fontSize: 11, color: T.sub, marginTop: 2 },
       section: { marginBottom: 24 },
-      h2: { fontSize: 12, fontWeight: 600, margin: '0 0 10px', color: T.tertiary, textTransform: 'uppercase', letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: 8 },
+      // Section titles share one token with their count pills (T.sub): at
+      // T.tertiary a pill-less title like "推送通道" reads dimmer than the
+      // section titles followed by a count badge.
+      h2: { fontSize: 12, fontWeight: 600, margin: '0 0 10px', color: T.sub, textTransform: 'uppercase', letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: 8 },
       count: { fontSize: 11, fontWeight: 600, color: T.sub, background: T.layer2, border: `1px solid ${T.borderSoft}`, borderRadius: 20, padding: '0 8px', lineHeight: '18px' },
       hero: { background: `linear-gradient(135deg, rgba(245,166,35,0.10), ${T.layer1} 60%)`, border: `1px solid ${T.border}`, borderLeft: `3px solid ${T.warn}`, borderRadius: 12, padding: '14px 16px', marginBottom: 10 },
       grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 },
@@ -152,7 +181,7 @@ window.__ModuleLoader__.load({
       countdown: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: T.warn, background: 'rgba(245,166,35,0.12)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 8, padding: '3px 10px', marginTop: 0 },
       link: { color: T.brand, textDecoration: 'none', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 6, transition: 'opacity .15s' },
       tools: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 },
-      tool: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', background: T.layer1, border: `1px solid ${T.borderSoft}`, borderRadius: 8, transition: 'all .15s ease' },
+      tool: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', background: T.layer1, border: `1px solid ${T.borderSoft}`, borderRadius: 8, transition: 'all .15s ease', cursor: 'pointer', textAlign: 'left', font: 'inherit', width: '100%' },
       toolDot: { width: 5, height: 5, borderRadius: '50%', background: T.brand, flex: 'none' },
       code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: T.brand, fontWeight: 600 },
       toolDesc: { fontSize: 11.5, color: T.tertiary, marginLeft: 'auto' },
@@ -177,13 +206,31 @@ window.__ModuleLoader__.load({
       mdHr: { border: 'none', borderTop: `1px solid ${T.borderSoft}`, margin: '16px 0' },
     }
 
-    function RadarIcon({ size = 20 }) {
+    // Toast anchor: bottom-center of the sidebar panel, so the message floats
+    // over the panel near the click but takes no layout space inside it.
+    function toastAnchor() {
+      const fallback = { left: '50%', bottom: 24 }
+      if (typeof document === 'undefined' || typeof window === 'undefined') return fallback
+      try {
+        const el = document.querySelector('.aihot-radar-panel')
+        const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null
+        if (!r || !r.width) return fallback
+        return {
+          left: Math.round(r.left + r.width / 2),
+          bottom: Math.max(12, Math.round(window.innerHeight - r.bottom + 16)),
+          maxWidth: Math.max(200, Math.round(r.width - 28)),
+        }
+      } catch { return fallback }
+    }
+
+    function RadarIcon({ size = 20, scale = 1 }) {
       return h('svg', { viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': true, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' },
-        h('path', { d: 'M12 20 A8 8 0 0 1 4 12', opacity: 0.55 }),
-        h('path', { d: 'M12 16 A4 4 0 0 1 8 12', opacity: 0.85 }),
-        h('circle', { cx: 12, cy: 12, r: 1.7, fill: 'currentColor', stroke: 'none' }),
-        h('line', { x1: 12, y1: 12, x2: 18, y2: 6 }),
-        h('circle', { cx: 18, cy: 6, r: 1.7, fill: 'currentColor', stroke: 'none' }))
+        h('g', { transform: `translate(12 12) scale(${scale}) translate(-12 -12)` },
+          h('path', { d: 'M12 20 A8 8 0 0 1 4 12', opacity: 0.55 }),
+          h('path', { d: 'M12 16 A4 4 0 0 1 8 12', opacity: 0.85 }),
+          h('circle', { cx: 12, cy: 12, r: 1.7, fill: 'currentColor', stroke: 'none' }),
+          h('line', { x1: 12, y1: 12, x2: 18, y2: 6 }),
+          h('circle', { cx: 18, cy: 6, r: 1.7, fill: 'currentColor', stroke: 'none' })))
     }
 
     // ---- Safe Markdown renderer (React elements only, no innerHTML) ----
@@ -390,6 +437,85 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(true)
       const [failed, setFailed] = useState([])
       const [updatedAt, setUpdatedAt] = useState(null)
+      const [copied, setCopied] = useState(null)
+      const [toast, setToast] = useState(null)
+      const [host, setHost] = useState(null)
+      const [testing, setTesting] = useState(false)
+      const [testResult, setTestResult] = useState(null)
+
+      useEffect(() => {
+        if (!toast) return
+        const id = setTimeout(() => { setToast(null); setCopied(null) }, 2000)
+        return () => clearTimeout(id)
+      }, [toast])
+
+      const copyQuestion = (name) => {
+        const q = sampleQuestion(name)
+        const done = (ok) => {
+          setCopied(ok ? name : null)
+          setToast({
+            ok,
+            title: ok ? t('tools.copiedTitle') : t('tools.copyFail').replace(/[：:]\s*$/, ''),
+            body: ok ? t('tools.copiedBody') : q,
+            n: Date.now(),
+          })
+        }
+        const fallback = () => {
+          if (!document.body) return done(false)
+          try {
+            const ta = document.createElement('textarea')
+            ta.value = q
+            ta.style.position = 'fixed'; ta.style.opacity = '0'
+            document.body.appendChild(ta)
+            ta.select()
+            const ok = document.execCommand('copy')
+            ta.remove()
+            done(ok)
+          } catch { done(false) }
+        }
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(q).then(() => done(true), fallback)
+        } else fallback()
+      }
+
+      useEffect(() => {
+        let cancelled = false
+        ;(async () => {
+          try {
+            const res = await fetch(LOCAL_API + '/status', { headers: { Accept: 'application/json' } })
+            if (!res.ok) throw new Error('http ' + res.status)
+            const j = await res.json()
+            if (!cancelled) setHost(j)
+          } catch { if (!cancelled) setHost(null) }
+        })()
+        return () => { cancelled = true }
+      }, [nonce])
+
+      const testPush = async () => {
+        setTesting(true); setTestResult(null)
+        try {
+          const res = await fetch(LOCAL_API + '/test-push', { method: 'POST' })
+          setTestResult(await res.json())
+        } catch (e) { setTestResult({ ok: false, error: String(e?.message || e) }) }
+        setTesting(false)
+      }
+
+      const copyConfig = () => {
+        const snippet = `- id: aihot-radar\n  name: dsh-aihot-radar\n  config:\n    radar:\n      enabled: true\n    digest:\n      enabled: true\n      time: "08:30"\n      timezone: Asia/Shanghai\n    notify:\n      signature: true\n`
+        const done = (ok) => setToast({ ok, title: ok ? t('push.copied') : t('push.copyFail'), n: Date.now() })
+        const fallback = () => {
+          if (!document.body) return done(false)
+          try {
+            const ta = document.createElement('textarea')
+            ta.value = snippet; ta.style.position = 'fixed'; ta.style.opacity = '0'
+            document.body.appendChild(ta); ta.select()
+            const ok = document.execCommand('copy'); ta.remove(); done(ok)
+          } catch { done(false) }
+        }
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(snippet).then(() => done(true), fallback)
+        } else fallback()
+      }
 
       useEffect(() => {
         let cancelled = false
@@ -448,11 +574,35 @@ window.__ModuleLoader__.load({
           recent.length ? h('div', { style: css.grid }, recent.slice(0, 10).map((x, i) => h(EventCard, { key: 'r' + i, ...x }))) : h('div', { style: css.empty }, loading ? t('empty.loading') : t('empty.recent'))),
         h('div', { style: css.section },
           h('div', { style: css.h2 }, t('sec.tools'), h('span', { style: css.count }, TOOLS.length)),
-          h('div', { style: css.tools }, TOOLS.map(([name, key]) => h('div', { style: css.tool, className: 'aihot-tool', key: name }, h('span', { style: css.toolDot }), h('span', { style: css.code }, name), h('span', { style: css.toolDesc }, t(key))))),
+          h('div', { style: css.tools }, TOOLS.map(([name, key]) => h('button', { type: 'button', style: css.tool, className: 'aihot-tool' + (copied === name ? ' aihot-tool-copied' : ''), key: name, onClick: () => copyQuestion(name), title: sampleQuestion(name) }, h('span', { style: { ...css.toolDot, ...(copied === name ? { background: T.success, width: 7, height: 7 } : {}) } }), h('span', { style: css.code }, name), h('span', { style: css.toolDesc }, copied === name ? t('tools.copiedShort') : t(key))))),
           h('div', { style: { ...css.metaDim, marginTop: 10 } }, t('tools.hint'))),
+        h('div', { style: css.section },
+          h('div', { style: css.h2 }, t('sec.push')),
+          host ? h('div', { style: css.card },
+            h('div', { style: css.row },
+              h('span', { style: css.cardTitle }, h('span', { style: css.dot(host.configured ? T.success : T.warn) }), t('push.channel', { c: host.channel })),
+              h('span', { style: css.badgeSoft(host.configured ? T.success : T.warn) }, host.configured ? t('push.on') : t('push.off'))),
+            h('div', { style: css.metaDim }, t('push.hint')),
+            h('div', { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
+              h('button', { type: 'button', style: { ...css.btn, ...(testing || !host.configured ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }, disabled: testing || !host.configured, onClick: testPush }, testing ? t('push.testing') : t('push.test')),
+              h('button', { type: 'button', style: css.btn, onClick: copyConfig }, t('push.copyConfig'))),
+            testResult ? h('div', { style: { color: testResult.ok ? T.success : T.error, fontSize: 12, marginTop: 8 } }, testResult.ok ? t('push.testOk') : t('push.testFail', { e: testResult.error || '' })) : null
+          ) : h('div', { style: css.metaDim }, t('push.bridge'))),
         h('div', { style: { ...css.metaDim, marginTop: -8, marginBottom: 8 } },
           (apiCheckedAt ? t('status.checkedAt', { t: fmtTime(apiCheckedAt) }) : '') + (apiCheckedAt && updatedAt ? ' · ' : '') + (updatedAt ? t('status.refreshedAt', { t: updatedAt.toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false }) }) : '')),
-        h('div', { style: { ...css.metaDim, marginBottom: 16 } }, t('status.askAgent')))
+        h('div', { style: { ...css.metaDim, marginBottom: 16 } }, t('status.askAgent')),
+        // Floating toast: fixed positioning keeps it out of the panel's layout
+        // flow, then it fades out after 2s.
+        toast ? h('div', {
+          className: 'aihot-toast ' + (toast.ok ? 'aihot-toast-ok' : 'aihot-toast-err'),
+          role: 'status',
+          'aria-live': 'polite',
+          style: toastAnchor(),
+        },
+        h('span', { className: 'aihot-toast-icon' }, toast.ok ? '✓' : '!'),
+        h('span', { className: 'aihot-toast-body' },
+          h('span', { className: 'aihot-toast-title' }, toast.title),
+          toast.body ? h('span', { className: 'aihot-toast-sub' }, toast.body) : null)) : null)
     }
 
     function RadarPanel() {
@@ -467,7 +617,7 @@ window.__ModuleLoader__.load({
         el.id = 'aihot-radar-style'
         el.textContent = `
           @keyframes aihot-pulse { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.5); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
-          @media (prefers-reduced-motion: reduce) { .aihot-pulse { animation: none !important; } }
+          @media (prefers-reduced-motion: reduce) { .aihot-pulse { animation: none !important; } .aihot-toast { animation: none !important; } }
           .aihot-radar-panel::-webkit-scrollbar { width: 8px; }
           .aihot-radar-panel::-webkit-scrollbar-track { background: transparent; }
           .aihot-radar-panel::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 8px; }
@@ -477,6 +627,17 @@ window.__ModuleLoader__.load({
           .aihot-tool:hover { border-color: ${T.border}; background: ${T.layer2}; }
           .aihot-link:hover { opacity: 0.75; }
           .aihot-tab:hover { color: ${T.sub}; background: ${T.hover}; }
+          .aihot-tool:active { transform: scale(0.98); }
+          .aihot-tool-copied { border-color: ${T.success}; background: ${T.layer2}; }
+          .aihot-toast { position: fixed; z-index: 999; pointer-events: none; display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; max-width: 80vw; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; transform: translateX(-50%); animation: aihot-toast-in .2s ease; }
+          .aihot-toast-ok { background: rgba(52,199,89,0.14); border: 1px solid rgba(52,199,89,0.55); color: ${T.text}; box-shadow: 0 6px 20px rgba(0,0,0,0.35); }
+          .aihot-toast-err { background: rgba(255,77,79,0.12); border: 1px solid rgba(255,77,79,0.55); color: ${T.text}; }
+          .aihot-toast-icon { width: 18px; height: 18px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #0e0e11; background: ${T.success}; margin-top: 1px; }
+          .aihot-toast-err .aihot-toast-icon { background: ${T.error}; color: #fff; }
+          .aihot-toast-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+          .aihot-toast-title { font-weight: 650; font-size: 12.5px; }
+          .aihot-toast-sub { font-size: 11.5px; color: ${T.sub}; word-break: break-word; }
+          @keyframes aihot-toast-in { from { opacity: 0; transform: translate(-50%, 8px) scale(0.98); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
         `
         document.head.appendChild(el)
       }, [])
@@ -484,20 +645,21 @@ window.__ModuleLoader__.load({
       return h('div', { style: css.panel, className: 'aihot-radar-panel' },
         h('div', { style: css.head },
           h('div', { style: css.titleWrap },
-            h('div', { style: css.iconBadge }, h(RadarIcon, { size: 21 })),
+            h('div', { style: css.iconBadge }, h(RadarIcon, { size: 21, scale: 1.2 })),
             h('div', null,
               h('div', { style: css.h1 }, t('meta.title'), h('span', { className: 'aihot-pulse', style: { ...css.live, background: monitorColor(monitor) }, title: monitorTitle(monitor), 'aria-hidden': true })),
               h('div', { style: css.sub }, t('sub')))),
           h('button', { type: 'button', style: css.btn, className: 'aihot-btn', onClick: () => setNonce((n) => n + 1) }, t('refresh'))),
 
         h('div', { style: css.tabs, role: 'tablist' },
-          h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'radar', style: { ...css.tab, ...(tab === 'radar' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('radar') }, h(RadarIcon, { size: 15 }), t('tab.radar')),
+          h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'radar', style: { ...css.tab, ...(tab === 'radar' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('radar') }, h(RadarIcon, { size: 18, scale: 1.2 }), t('tab.radar')),
           h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'daily', style: { ...css.tab, ...(tab === 'daily' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('daily') }, '📰', t('tab.daily'))),
 
         tab === 'radar' ? h(RadarContent, { nonce, onMonitor: setMonitor }) : h(DailyReport, { nonce }),
 
         h('div', { style: css.foot },
           t('foot.source'), h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: BASE, target: '_blank', rel: 'noreferrer' }, 'AIHOT', h('span', null, '↗')),
+          h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: REPO + '/issues', target: '_blank', rel: 'noreferrer' }, t('foot.feedback'), h('span', null, '↗')),
           h('span', { style: { marginLeft: 'auto' } }, t('foot.push'))))
     }
 
