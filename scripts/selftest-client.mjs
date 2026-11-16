@@ -94,12 +94,14 @@ const shLatest = () => {
 }
 let hostConfigured = true
 let hostDigestCfg = true
+let hostDigestState = {}
+let hostDigestTz = 'Asia/Shanghai'
 let statusFails = 0
 const fetchMock = async (url, init) => {
   const u = String(url)
   if (u.startsWith('http://127.0.0.1:17420/status')) {
     if (statusFails > 0) { statusFails--; throw new Error('ECONNREFUSED') }
-    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: {}, radar: { quiet: { start: '', end: '' }, muted: [] }, ...(hostDigestCfg ? { digestCfg: { enabled: false, time: '08:30', timezone: 'Asia/Shanghai', nextRunAt: Date.now() + 3600000 } } : {}) }) }
+    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: hostDigestState, radar: { quiet: { start: '', end: '' }, muted: [] }, ...(hostDigestCfg ? { digestCfg: { enabled: false, time: '08:30', timezone: hostDigestTz, nextRunAt: Date.now() + 3600000 } } : {}) }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/webhook')) {
     const body = JSON.parse(init?.body || '{}')
@@ -107,6 +109,10 @@ const fetchMock = async (url, init) => {
     return { ok: true, status: 200, json: async () => ({ ok: true, channel: body.channel || 'wecom', configured: !off, urlHost: off ? '' : 'qyapi.weixin.qq.com' }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/test-push')) return { ok: true, status: 200, json: async () => ({ ok: true, chunks: 1, channel: 'wecom' }) }
+  // Must be checked before /digest: startsWith would swallow it.
+  if (u.startsWith('http://127.0.0.1:17420/digest/test')) {
+    return { ok: true, status: 200, json: async () => ({ ok: true, date: '2026-11-16', chunks: 2 }) }
+  }
   if (u.startsWith('http://127.0.0.1:17420/digest')) {
     const body = JSON.parse(init?.body || '{}')
     return { ok: true, status: 200, json: async () => ({ ok: true, enabled: body.enabled === true, time: body.time || '08:30', nextRunAt: Date.now() + 3600000 }) }
@@ -159,6 +165,17 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   check('R2: 故障公告含 text 无 AIHOT 兜底', html.includes('服务故障公告') && html.includes('Codex 故障中') && !/服务故障公告：AIHOT/.test(html))
   check('B5: 部分失败汇总+其余仍在', html.includes('部分来源读取失败') && html.includes('antigravity') && html.includes('Codex'))
   check('P1 推送区块: 状态 + 测试 + 修改', !!findButton(tree, '发送测试推送') && !!findButton(tree, '修改') && html.includes('当前地址：qyapi.weixin.qq.com'))
+  // Both cards must order their action row the same way: 测试 comes last.
+  {
+    const chTest = findButton(tree, '发送测试推送')
+    const chRow = [...walk(tree)].find((n) => Array.isArray(n.children)
+      && n.children.filter((c) => c && c.type === 'button').length === 2 && n.children.includes(chTest))
+    const chLabels = chRow ? chRow.children.filter((c) => c && c.type === 'button').map(textOf) : []
+    check('P17 通道卡动作行: 测试在前、修改（提交位）在后', chLabels[0] === '发送测试推送' && chLabels[1] === '修改')
+    check('P17 修改是描边按钮（有边框、无填充）',
+      findButton(tree, '修改').props.style.background === 'transparent'
+      && /border-l2/.test(String(findButton(tree, '修改').props.style.border)))
+  }
   check('P2 反馈入口链接', html.includes('反馈/报障'))
   const tpBtn = findButton(tree, '发送测试推送')
   tpBtn.props.onClick()
@@ -176,15 +193,46 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   digSwitch.props.onChange({ target: { checked: true } })
   let treeD = await render()
   check('P9 默认值来自宿主', findById(treeD, 'aihot-digest-time').props.value === '08:30')
+  check('P16 日报卡有「已启用」徽章', stringify(treeD).includes('已启用'))
+  const saveBtn = findButton(treeD, '保存日报设置')
+  const actRow = [...walk(treeD)].find((n) => n.children && n.props && n.props.style
+    && n.props.style.marginTop === 8 && [...walk(n)].includes(saveBtn))
+  const actLabels = actRow ? [...walk(actRow)].filter((n) => n.type === 'button').map((n) => textOf(n)) : []
+  check('P16 保存为主按钮，动作行在控件下方、提交位在最后',
+    saveBtn.props.style.fontWeight === 600
+    && !!actRow && actRow.props.style.marginLeft !== 'auto'
+    && actLabels[0] === '发送测试日报' && actLabels[1] === '保存日报设置')
 
   // focus opens the half-hour preset list
   findById(treeD, 'aihot-digest-time').props.onFocus()
   treeD = await render()
-  let items = [...walk(treeD)].filter((n) => n.type === 'button' && /aihot-digest-item/.test(n.props.className || ''))
+  let items = [...walk(treeD)].filter((n) => n.props && /aihot-digest-item/.test(n.props.className || ''))
   check('P9 预设为半小时间隔', items.length === 48 && textOf(items[2]) === '01:00' && textOf(items[3]) === '01:30')
+  check('P14 选项是合法的 listbox/option（不是 button）',
+    [...walk(treeD)].some((n) => n.props && n.props.role === 'listbox')
+    && items.every((n) => n.props.role === 'option' && n.type !== 'button'))
   items[21].props.onClick()
   treeD = await render()
   check('P9 点选预设写回输入框', findById(treeD, 'aihot-digest-time').props.value === '10:30')
+
+  // keyboard: ArrowDown parks on the first preset, Enter takes it
+  const kd = (key) => findById(treeD, 'aihot-digest-time').props.onKeyDown({ key, preventDefault() {} })
+  kd('ArrowDown')
+  treeD = await render()
+  check('P14 方向键有活动项', findById(treeD, 'aihot-digest-time').props['aria-activedescendant'] === 'aihot-digest-opt-0')
+  kd('Enter')
+  treeD = await render()
+  check('P14 回车选中活动项', findById(treeD, 'aihot-digest-time').props.value === '00:00')
+
+  // time can be edited while the schedule is off (switch it off first)
+  findById(treeD, 'aihot-digest-on').props.onChange({ target: { checked: false } })
+  treeD = await render()
+  check('P15 关闭定时后时间仍可编辑', findById(treeD, 'aihot-digest-time').props.disabled !== true)
+  check('P15 关闭态改为徽章+说明，不再写在副标题里',
+    stringify(treeD).includes('未启用') && stringify(treeD).includes('已关闭定时推送')
+    && !stringify(treeD).includes('默认关闭'))
+  findById(treeD, 'aihot-digest-on').props.onChange({ target: { checked: true } })
+  treeD = await render()
 
   // typed input is allowed too, and is normalised on blur
   findById(treeD, 'aihot-digest-time').props.onChange({ target: { value: '7:5' } })
@@ -205,6 +253,13 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   treeD = await render()
   check('P9 非法时间禁止保存并给出格式提示',
     findButton(treeD, '保存日报设置').props.disabled === true && stringify(treeD).includes('时间格式需为 HH:MM'))
+
+  // A3/A5: next run is labelled with the host timezone; the digest can be tested
+  check('P11 下次推送带时区', /下次推送：\d{2}:\d{2}（北京时间）/.test(stringify(treeD)))
+  findButton(treeD, '发送测试日报').props.onClick()
+  await sleep(60)
+  treeD = await render()
+  check('P11 测试日报成功反馈', stringify(treeD).includes('测试日报已发出') && stringify(treeD).includes('2026-11-16'))
 
   // switch to daily tab
   const dailyBtn = findButton(tree, '今日日报')
@@ -257,6 +312,14 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   tree = await render()
   check('P7 下拉不含「未配置」，关闭是单独按钮',
     ![...walk(tree)].some((n) => n.type === 'option' && textOf(n) === '未配置') && !!findButton(tree, '关闭推送'))
+  {
+    const footer = [...walk(tree)].find((n) => Array.isArray(n.children)
+      && n.children.filter((c) => c && c.type === 'button').length === 4
+      && n.children.some((c) => c && c.type === 'button' && textOf(c) === '取消'))
+    const labels = footer ? footer.children.filter((c) => c && c.type === 'button').map(textOf) : []
+    check('P18 表单页脚顺序: 取消 → 关闭推送 → 仅保存 → 保存并发送测试',
+      labels[0] === '取消' && labels[1] === '关闭推送' && labels[2] === '仅保存' && labels[3] === '保存并发送测试')
+  }
   findButton(tree, '关闭推送').props.onClick()
   tree = await render()
   check('P7 关闭需二次确认', !!findButton(tree, '确认关闭？'))
@@ -264,6 +327,34 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   await sleep(120)
   tree = await render()
   check('P7 关闭后回到未配置态', !!findButton(tree, '仅保存') && stringify(tree).includes('已关闭推送'))
+  dispose()
+}
+
+// ---- digest run state: failures are visible, success is acknowledged ----
+{
+  hostDigestState = { retryDate: '2026-11-15', lastError: 'webhook 超时', retries: 3 }
+  let p = await loadPanel('zh')
+  let tree = await p.render()
+  const html = stringify(tree)
+  check('P12 日报连续失败对用户可见', html.includes('上次推送失败') && html.includes('webhook 超时'))
+  p.dispose()
+
+  hostDigestState = { lastDate: '2026-11-14' }
+  p = await loadPanel('zh')
+  tree = await p.render()
+  check('P12 日报成功回执', stringify(tree).includes('上次推送：2026-11-14 已送达'))
+  p.dispose()
+
+  hostDigestState = {}
+}
+
+// ---- a non-default timezone must be shown, not silently assumed Beijing ----
+{
+  hostDigestTz = 'UTC'
+  const { render, dispose } = await loadPanel('zh')
+  const tree = await render()
+  check('P13 非默认时区按 IANA 显示', /下次推送：\d{2}:\d{2}（UTC）/.test(stringify(tree)))
+  hostDigestTz = 'Asia/Shanghai'
   dispose()
 }
 

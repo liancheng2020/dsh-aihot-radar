@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createNotifier, chunkContent, formatResetMessage, formatInferredMessage, withSignature, DEFAULT_SIGNATURE, toPlainText, toFeishuCard } from '../lib/notify.js'
 import { scanProvider } from '../lib/radar.js'
-import { validateTime, msUntilNext } from '../lib/digest.js'
-import { isQuietNow, tzParts, resolveTz } from '../lib/time.js'
+import { effectiveDigest } from '../lib/digest.js'
+import { validateTime, msUntilNext, isQuietNow, tzParts, resolveTz } from '../lib/time.js'
 import { startLocalApi } from '../lib/localapi.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -337,6 +337,81 @@ await atest('L5 test-push failure carries an actionable hint', async () => {
     assert.ok(String(j.hint).includes('Webhook'), 'hint explains the next step: ' + j.hint)
   } finally {
     // Close even when an assertion throws, or the listeners keep node alive.
+    stop(); await new Promise((r) => hook.close(r))
+  }
+})
+
+// ---- L7..L10: digest schedule (panel prefs) + manual digest push ----
+const postJson = (port, path, body) => fetch(`http://127.0.0.1:${port}${path}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}).then((r) => r.json())
+
+await atest('L7 bridge saves digest pref and status reflects it', async () => {
+  const state = { webhook: { channel: 'none', url: '', secret: '' }, digestPref: { enabled: null, time: null }, digest: {} }
+  let saved = 0, rescheduled = 0
+  const stop = bridge(17427, state, {
+    save: () => { saved++; return true },
+    digestCtl: () => ({ reschedule: () => { rescheduled++ }, nextRunAt: () => 1700000000000 }),
+  })
+  try {
+    await wait()
+    const j = await postJson(17427, '/digest', { enabled: true, time: '07:15' })
+    assert.equal(j.ok, true); assert.equal(j.enabled, true); assert.equal(j.time, '07:15')
+    assert.equal(j.nextRunAt, 1700000000000, 'next run comes from the host timer')
+    assert.equal(state.digestPref.enabled, true); assert.equal(state.digestPref.time, '07:15')
+    assert.equal(saved, 1, 'persisted once')
+    assert.equal(rescheduled, 1, 'timer rescheduled without a restart')
+    const st = await (await fetch('http://127.0.0.1:17427/status')).json()
+    assert.equal(st.digestCfg.enabled, true); assert.equal(st.digestCfg.time, '07:15')
+  } finally { stop() }
+})
+
+await atest('L8 bridge rejects a bad digest time / wrong content-type', async () => {
+  const state = { webhook: { channel: 'none', url: '', secret: '' }, digestPref: { enabled: null, time: null } }
+  const stop = bridge(17428, state)
+  try {
+    await wait()
+    const bad = await postJson(17428, '/digest', { enabled: true, time: '9:99' })
+    assert.equal(bad.code, 'bad-time')
+    assert.equal(state.digestPref.enabled, null, 'rejected write leaves the pref untouched')
+    const badType = await postJson(17428, '/digest', { enabled: 'true' })
+    assert.equal(badType.code, 'bad-enabled', 'a string "true" must not be coerced')
+    const ct = await fetch('http://127.0.0.1:17428/digest', { method: 'POST', body: 'x' })
+    assert.equal(ct.status, 415)
+    // Partial updates keep what was not sent.
+    await postJson(17428, '/digest', { enabled: true, time: '06:45' })
+    await postJson(17428, '/digest', { time: '07:00' })
+    assert.equal(state.digestPref.enabled, true, 'time-only update keeps the switch')
+    assert.equal(state.digestPref.time, '07:00')
+  } finally { stop() }
+})
+
+test('L9 effectiveDigest: panel pref wins, config decides otherwise', () => {
+  const hook = { channel: 'wecom', url: 'https://x' }
+  // A configured webhook must NOT switch the digest on by itself (upgrade safety).
+  assert.equal(effectiveDigest({ webhook: hook, digestPref: {} }, { digest: { enabled: false } }).enabled, false)
+  assert.equal(effectiveDigest({ digestPref: { enabled: true } }, { digest: { enabled: false } }).enabled, true)
+  assert.equal(effectiveDigest({ digestPref: { enabled: false } }, { digest: { enabled: true } }).enabled, false)
+  assert.equal(effectiveDigest({ digestPref: { time: '09:05' } }, { digest: { time: '08:30' } }).time, '09:05')
+})
+
+await atest('L10 manual digest push sends the report and never marks today done', async () => {
+  const received = []
+  const hook = http.createServer((req, res) => {
+    let b = ''; req.on('data', (c) => b += c)
+    req.on('end', () => { received.push(b); res.setHeader('Content-Type', 'application/json'); res.end('{"errcode":0}') })
+  })
+  await new Promise((r) => hook.listen(0, '127.0.0.1', r))
+  const state = { webhook: { channel: 'wecom', url: 'http://127.0.0.1:' + hook.address().port, secret: '' }, digestPref: {}, digest: { lastDate: null } }
+  const api = { dailyJson: async () => ({ report: { date: '2026-11-16', lead: { title: 'T' }, sections: [{ label: 'S', items: [{ title: 'I' }] }] } }) }
+  const stop = bridge(17429, state, { api })
+  try {
+    await wait()
+    const j = await postJson(17429, '/digest/test', {})
+    assert.equal(j.ok, true); assert.equal(j.date, '2026-11-16')
+    assert.ok(received.length >= 1, 'webhook received the digest')
+    assert.equal(state.digest.lastDate, null, 'a manual test must not swallow the real 08:30 push')
+  } finally {
     stop(); await new Promise((r) => hook.close(r))
   }
 })

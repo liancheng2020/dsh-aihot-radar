@@ -26,7 +26,7 @@ const DEFAULT_RADAR = {
   muted: [],
   quiet: { start: '', end: '' },
 }
-const DEFAULT_DIGEST = { enabled: false, time: '08:30', timezone: 'Asia/Shanghai' }
+const DEFAULT_DIGEST = { enabled: false, time: '08:30', timezone: 'Asia/Shanghai', catchUp: false }
 const DEFAULT_NOTIFY = { signature: true, signatureText: '' }
 
 export const Config = z.object({
@@ -46,6 +46,9 @@ export const Config = z.object({
     enabled: z.boolean().default(DEFAULT_DIGEST.enabled),
     time: z.string().default(DEFAULT_DIGEST.time),
     timezone: z.string().default(DEFAULT_DIGEST.timezone),
+    // Push today's digest on startup if the host came up after the scheduled
+    // time and nothing was sent yet.
+    catchUp: z.boolean().default(DEFAULT_DIGEST.catchUp),
   }).default(DEFAULT_DIGEST),
   notify: z.object({
     signature: z.boolean().default(DEFAULT_NOTIFY.signature),
@@ -140,6 +143,7 @@ export function apply(ctx, config) {
   if (config.localApi?.enabled !== false) {
     ctx.effect(() => startLocalApi({
       state, notifier, config, logger: log, save: (s) => saveState(s, log), digestCtl: () => digestCtl,
+      api: syncApi,
     }))
   }
 
