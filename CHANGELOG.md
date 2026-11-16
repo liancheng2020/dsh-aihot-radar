@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.3.2] - 2026-11-16
+
+### Fixed
+- **推送失败不再被当成已发送**：雷达只在通道确认后才写入 `seen`；明确失败留待下一轮重试（最多 5 次，超限退役并记录），超时或连接中断记为「送达不确定」，不自动重发（重发可能让同一个群收到两条）。
+- **多实例（桌面 + Web 共用 `DSH_HOME`）不再重复推送**：状态锁覆盖「读状态 → 判重 → 发送 → 写状态」整条流程，并在锁内重读合并；锁带心跳续期、过期接管互斥，丢失锁的持有者拒绝写入。
+- **写入口按字段认领**：面板保存 webhook / 日报偏好、日报保存运行态时，不再用旧快照覆盖其他实例的 `seen`、配置或 `delivery` 记录；已清除的异常记录不会复活，被裁剪的 `seen` 键也不会回来。
+- **日报**：同一期在「送达不确定」后不再被后续 tick 或改时间重发；超时不占重试预算；另一实例关闭日报后本实例立即停发；`report.date` 严格校验，归档路径不能越出 `digest/`；截断后始终保留全文链接。
+- **API 客户端超时覆盖正文读取**，不再出现「响应头已到、正文永久卡住」。
+- **回执判定收紧**：HTTP 200 + HTML 页面、已知平台的空正文、缺少成功字段都不再算推送成功；飞书仅在明确的卡片格式错误时降级为纯文本，超时 / 429 / 5xx 不再补发。
+- **自建 `generic` 通道**保留 2xx + 空正文（204）为成功，避免这类端点被误判为失败后反复重试。
+
+### Added
+- `state.json` 新增 `delivery`（重试 / 不确定记录）与 `digest.uncertain`；`/status` 与 `aihot_radar_status` 透出 `delivery`。
+- 自测：宿主 66 项（新增 N1–N12、N5b、P1–P5、R1–R6、T1–T3），客户端 56 项；`verify-dedup.mjs` 扩为 4 个场景（错开启动、真正同时启动、抢锁后重试、慢操作期间锁续期）。
+
 ## [0.3.0] - 2026-11-16
 
 ### Added
@@ -82,6 +97,7 @@ All notable changes to this project are documented here. Format follows
 - 多实例（desktop + web）重复推送；`state.json` 损坏导致启动失败。
 - 自测依赖真实日期、结果不可复现。
 
+[0.3.2]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.3.2
 [0.3.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.3.0
 [0.2.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.2.0
 [0.1.2]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.1.2
