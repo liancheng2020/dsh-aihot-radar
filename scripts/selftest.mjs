@@ -25,6 +25,12 @@ const atest = async (name, fn) => {
   catch (e) { console.log('FAIL  ' + name + '  ' + e.message); failed++ }
   finally { clearTimeout(timer) }
 }
+// Node 18's server.close() waits for idle keep-alive sockets, so a fetch-based
+// fake server stalls until undici's 5s idle timeout (Node >=19 closes them for
+// us). Drop the idle sockets explicitly, otherwise these cases look "hung".
+const shutdown = (srv) => new Promise((r) => {
+  srv.closeIdleConnections?.(); srv.closeAllConnections?.(); srv.close(r)
+})
 
 // ---- A5: addDays must be timezone-independent (extracted from client.js) ----
 const src = readFileSync(join(here, '../client.js'), 'utf8')
@@ -81,7 +87,7 @@ await atest('A1 wecom 8000B -> >=2 chunks each <=4096B, complete', async () => {
   for (const x of received) assert.ok(Buffer.byteLength(x.markdown.content, 'utf8') <= 4096, 'each <=4096B')
   const recon = received.map((x) => x.markdown.content.split('\n').slice(1).join('\n')).join('\n')
   assert.equal(recon, text, 'content complete')
-  await new Promise((r) => srv.close(r))
+  await shutdown(srv)
 })
 await atest('A1 HTTP200 + errcode93000 -> ok:false', async () => {
   const srv = http.createServer((req, res) => {
@@ -92,7 +98,7 @@ await atest('A1 HTTP200 + errcode93000 -> ok:false', async () => {
   const n = createNotifier()
   const r = await n.send({ channel: 'wecom', url: 'http://127.0.0.1:' + srv.address().port }, 't', 'short')
   assert.equal(r.ok, false); assert.ok(/invalid webhook/.test(r.error))
-  await new Promise((r) => srv.close(r))
+  await shutdown(srv)
 })
 test('A1 telegram char chunks <=3800', () => {
   const c = chunkContent('a'.repeat(9000), 3800, 'chars')
@@ -246,7 +252,7 @@ await atest('L1 bridge status configured + test-push reaches webhook', async () 
   assert.ok(!JSON.stringify(st).includes('s3cret'), 'no secret leakage')
   const tp = await (await fetch('http://127.0.0.1:17421/test-push', { method: 'POST' })).json()
   assert.equal(tp.ok, true); assert.ok(received.length >= 1, 'webhook received test push')
-  stop(); await new Promise((r) => hook.close(r))
+  stop(); await shutdown(hook)
 })
 
 // ---- L2..L4: webhook writes (validation, persistence, cross-site denial) ----
@@ -337,7 +343,7 @@ await atest('L5 test-push failure carries an actionable hint', async () => {
     assert.ok(String(j.hint).includes('Webhook'), 'hint explains the next step: ' + j.hint)
   } finally {
     // Close even when an assertion throws, or the listeners keep node alive.
-    stop(); await new Promise((r) => hook.close(r))
+    stop(); await shutdown(hook)
   }
 })
 
@@ -412,7 +418,7 @@ await atest('L10 manual digest push sends the report and never marks today done'
     assert.ok(received.length >= 1, 'webhook received the digest')
     assert.equal(state.digest.lastDate, null, 'a manual test must not swallow the real 08:30 push')
   } finally {
-    stop(); await new Promise((r) => hook.close(r))
+    stop(); await shutdown(hook)
   }
 })
 
