@@ -88,6 +88,8 @@ export function apply(ctx, config) {
       channel: state.webhook?.channel || 'none',
       lastCheck: state.lastCheck || {},
       lastResult: state.lastResult || {},
+      // Pushes waiting for a retry / whose delivery is unknown, per provider.
+      delivery: state.delivery || {},
       digest: state.digest || {},
       radar: { quiet: config.radar?.quiet || { start: '', end: '' }, muted: config.radar?.muted || [] },
       digestCfg: { timezone: config.digest?.timezone || 'Asia/Shanghai', time: config.digest?.time || '08:30' },
@@ -116,25 +118,40 @@ export function apply(ctx, config) {
       if (failCount[p] === 3) log?.error?.(`雷达 ${p} 连续 3 次扫描失败：${r.error}`)
     } else {
       failCount[p] = 0
-      state.lastResult[p] = { at, ok: true, error: null, pending: r.pending?.length || 0 }
+      const retrying = r.retrying?.length || 0
+      const uncertain = r.uncertain?.length || 0
+      const gaveUp = r.gaveUp?.length || 0
+      state.lastResult[p] = {
+        at, ok: true, error: null, pending: r.pending?.length || 0,
+        ...(retrying ? { retrying } : {}), ...(uncertain ? { uncertain } : {}), ...(gaveUp ? { gaveUp } : {}),
+      }
       log?.debug?.(`雷达 ${p} 扫描完成：事件 ${r.events?.length || 0} · 推送 ${r.notified?.length || 0} · 待生效 ${r.pending?.length || 0}`)
+      // Not a scan failure, but the user must be able to tell "not sent yet" and
+      // "maybe sent" apart from "delivered".
+      if (retrying) log?.warn?.(`雷达 ${p} 推送失败，下轮重试 ${retrying} 条（最多 5 次）`)
+      if (uncertain) log?.warn?.(`雷达 ${p} 推送超时，送达不确定 ${uncertain} 条（不会自动重发，避免重复通知）`)
+      if (gaveUp) log?.error?.(`雷达 ${p} 推送重试耗尽，放弃 ${gaveUp} 条`)
     }
     saveState(state, log)
   }
   const onDigest = (r) => {
-    // digest.js already logs warn/error on failure; log success here.
-    if (r.ok || r.skipped) log?.debug?.(`日报回调：${r.date || ''} ${r.skipped ? '仅归档' : '已推送'}`)
+    // digest.js already logs warn/error on failure; log success here. A skipped
+    // run is not always "archived only" — it can be a duplicate period or one
+    // whose delivery is unknown, so report the reason instead of guessing.
+    if (r.ok || r.skipped) log?.debug?.(`日报回调：${r.date || ''} ${r.skipped ? `跳过（${r.reason || 'no webhook'}）` : '已推送'}`)
   }
 
   ctx.effect(() => startRadar({
-    api: syncApi, state, notifier, config, onScan,
+    api: syncApi, state, notifier, config, onScan, logger: log,
   }))
 
   // Held so the bridge can reschedule after the panel saves a new digest time.
   let digestCtl = null
   ctx.effect(() => {
     digestCtl = startDigest({
-      api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onDigest, logger: log,
+      // The digest owns its own run state only; everything else is merged from
+      // disk so a stale snapshot cannot revert the radar's seen keys.
+      api: syncApi, state, notifier, config, save: (s) => saveState(s, log, { own: ['digest'] }), onDigest, logger: log,
     })
     return () => digestCtl?.stop?.()
   })
@@ -142,7 +159,9 @@ export function apply(ctx, config) {
   // Loopback bridge for the sidebar panel (status + save webhook/digest + test push). Optional.
   if (config.localApi?.enabled !== false) {
     ctx.effect(() => startLocalApi({
-      state, notifier, config, logger: log, save: (s) => saveState(s, log), digestCtl: () => digestCtl,
+      // The bridge passes the section it just changed (webhook / digestPref);
+      // state.js merges the rest from disk.
+      state, notifier, config, logger: log, save: (s, own) => saveState(s, log, { own }), digestCtl: () => digestCtl,
       api: syncApi,
     }))
   }

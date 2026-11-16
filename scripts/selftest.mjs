@@ -5,12 +5,14 @@
 
 import assert from 'node:assert'
 import http from 'node:http'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createNotifier, chunkContent, formatResetMessage, formatInferredMessage, withSignature, DEFAULT_SIGNATURE, toPlainText, toFeishuCard } from '../lib/notify.js'
 import { scanProvider } from '../lib/radar.js'
-import { effectiveDigest } from '../lib/digest.js'
+import { createApi } from '../lib/api.js'
+import { effectiveDigest, renderReportText, assertReportDate, runDigest } from '../lib/digest.js'
 import { validateTime, msUntilNext, isQuietNow, tzParts, resolveTz } from '../lib/time.js'
 import { startLocalApi } from '../lib/localapi.js'
 
@@ -420,6 +422,501 @@ await atest('L10 manual digest push sends the report and never marks today done'
   } finally {
     stop(); await shutdown(hook)
   }
+})
+
+// ---- N: delivery bookkeeping — a failed push must not vanish, a timed-out one
+// ---- must not be re-sent, and HTTP 200 alone must never count as delivered ----
+const mkEvent = (id, status = 'announced') => ({
+  id, status, displayLabel: 'x', title: 't', presentation: { status }, posts: [],
+})
+const notiState = () => ({ seen: {}, webhook: { channel: 'wecom', url: 'https://x' }, lastCheck: {}, delivery: {} })
+
+await atest('N1 definite failure stays unseen and retries on the next cycle', async () => {
+  const state = notiState()
+  const api = { resetsRecent: async () => ({ events: [mkEvent('e1')] }) }
+  let calls = 0
+  const notifier = {
+    send: async () => {
+      calls++
+      return calls === 1
+        ? { ok: false, status: 500, code: 500, retryable: true, error: 'HTTP 500' }
+        : { ok: true, status: 200, code: null, chunks: 1 }
+    },
+  }
+  const first = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(first.notified.length, 1)
+  assert.equal(first.retrying.length, 1, 'reported as waiting for a retry')
+  assert.deepEqual(state.seen.codex, [], 'a failed push must not be marked seen')
+  assert.equal(state.delivery.codex['e1:announced'].state, 'retrying')
+
+  const second = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(second.notified.length, 1, 'same event is pushed again')
+  assert.deepEqual(state.seen.codex, ['e1:announced'], 'seen only after the channel accepted it')
+  assert.equal(state.delivery.codex['e1:announced'], undefined, 'bookkeeping cleared on success')
+
+  const third = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(third.notified.length, 0, 'never pushed twice after success')
+})
+
+await atest('N2 timeout marks delivery uncertain and is not resent', async () => {
+  const state = notiState()
+  const api = { resetsRecent: async () => ({ events: [mkEvent('e2')] }) }
+  let calls = 0
+  const notifier = { send: async () => { calls++; return { ok: false, status: 0, code: 0, timeout: true, retryable: false, error: '请求超时' } } }
+  const first = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(first.uncertain.length, 1, 'surfaced as uncertain')
+  assert.deepEqual(state.seen.codex, ['e2:announced'], 'marked seen so it cannot double-push')
+  assert.equal(state.delivery.codex['e2:announced'].state, 'uncertain')
+  const second = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(second.notified.length, 0)
+  assert.equal(calls, 1, 'a maybe-delivered card is never sent twice')
+})
+
+await atest('N3 retries are bounded, then the key is retired', async () => {
+  const state = notiState()
+  const api = { resetsRecent: async () => ({ events: [mkEvent('e3')] }) }
+  let calls = 0
+  const notifier = { send: async () => { calls++; return { ok: false, status: 400, code: 400, retryable: true, error: 'HTTP 400' } } }
+  for (let i = 0; i < 6; i++) await scanProvider(api, 'codex', state, notifier)
+  assert.equal(calls, 5, 'stops at MAX_SEND_ATTEMPTS instead of retrying forever')
+  assert.deepEqual(state.seen.codex, ['e3:announced'])
+  assert.equal(state.delivery.codex['e3:announced'].state, 'gave-up')
+})
+
+const fakeRes = (status, body, contentType = 'application/json') => ({
+  ok: status >= 200 && status < 300,
+  status,
+  headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? contentType : null) },
+  text: async () => body,
+})
+
+await atest('N4 HTTP 200 with an HTML page is not a success', async () => {
+  const n = createNotifier({ fetchImpl: async () => fakeRes(200, '<html><body>proxy auth</body></html>', 'text/html') })
+  const r = await n.send({ channel: 'wecom', url: 'https://x' }, 't', 'body')
+  assert.equal(r.ok, false)
+  assert.ok(/HTML|JSON/.test(r.error), 'explains why: ' + r.error)
+  assert.equal(r.retryable, true)
+})
+
+await atest('N5 HTTP 200 with an empty body is not a success', async () => {
+  const n = createNotifier({ fetchImpl: async () => fakeRes(200, '   ') })
+  const r = await n.send({ channel: 'wecom', url: 'https://x' }, 't', 'body')
+  assert.equal(r.ok, false)
+  assert.ok(/为空/.test(r.error), r.error)
+})
+
+await atest('N5b a self-hosted 204 with no body counts as delivered (generic only)', async () => {
+  const n = createNotifier({ fetchImpl: async () => fakeRes(204, '') })
+  const r = await n.send({ channel: 'generic', url: 'https://hooks.example/x' }, 't', 'body')
+  assert.equal(r.ok, true, '204 is the documented "accepted" shape for a self-hosted hook')
+  assert.equal(r.retryable, false)
+
+  // The exception must not leak: a known platform without a receipt is unknown.
+  const im = createNotifier({ fetchImpl: async () => fakeRes(200, '') })
+  const r2 = await im.send({ channel: 'wecom', url: 'https://x' }, 't', 'body')
+  assert.equal(r2.ok, false)
+  assert.equal(r2.retryable, true)
+})
+
+await atest('N6 known channel without its success field is not a success', async () => {
+  const n = createNotifier({ fetchImpl: async () => fakeRes(200, '{"msg":"ok"}') })
+  const r = await n.send({ channel: 'wecom', url: 'https://x' }, 't', 'body')
+  assert.equal(r.ok, false)
+  assert.ok(/errcode/.test(r.error), r.error)
+})
+
+await atest('N7 feishu timeout does not fall back to text (no duplicate card)', async () => {
+  let calls = 0
+  const fetchImpl = async () => {
+    calls++
+    const e = new Error('This operation was aborted')
+    e.name = 'AbortError'
+    throw e
+  }
+  const n = createNotifier({ fetchImpl, timeoutMs: 50 })
+  const r = await n.send({ channel: 'feishu', url: 'https://open.feishu.cn/x' }, 't', 'body')
+  assert.equal(calls, 1, 'exactly one attempt: a timeout may have been delivered')
+  assert.equal(r.ok, false)
+  assert.equal(r.timeout, true)
+})
+
+await atest('N8 feishu rate limit or 5xx does not fall back to text', async () => {
+  for (const res of [fakeRes(429, '{"code":9499,"msg":"too many"}'), fakeRes(503, '{"code":1}')]) {
+    let calls = 0
+    const n = createNotifier({ fetchImpl: async () => { calls++; return res } })
+    const r = await n.send({ channel: 'feishu', url: 'https://open.feishu.cn/x' }, 't', 'body')
+    assert.equal(calls, 1, `HTTP ${res.status} must not be retried as text`)
+    assert.equal(r.ok, false)
+  }
+})
+
+await atest('N9 api timeout covers the body read, not only the headers', async () => {
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.write('{"report":') // headers arrive, the body never completes
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const api = createApi({ baseUrl: 'http://127.0.0.1:' + srv.address().port, timeoutMs: 300 })
+  const t0 = Date.now()
+  let err = null
+  try { await api.dailyJson() } catch (e) { err = e }
+  const ms = Date.now() - t0
+  await shutdown(srv)
+  assert.ok(err, 'a stalled body must reject')
+  assert.equal(err.timeout, true, 'reported as a timeout: ' + (err && err.message))
+  assert.ok(ms < 3000, 'aborted by the timeout instead of hanging: ' + ms + 'ms')
+})
+
+await atest('N10 a truncated digest still carries the full-text link', async () => {
+  const url = 'https://aihot.news/daily/2026-11-16'
+  const report = { date: '2026-11-16', lead: { title: 'T', leadParagraph: '长'.repeat(4000) }, sections: [], links: { aihot: url } }
+  const text = renderReportText(report)
+  assert.ok(Buffer.byteLength(text, 'utf8') <= 3000, 'stays inside the budget: ' + Buffer.byteLength(text, 'utf8'))
+  assert.ok(/已截断/.test(text), 'says it was truncated')
+  assert.ok(text.includes(url), 'and still includes the link it points at')
+})
+
+test('N11 report.date must be a plain calendar date', () => {
+  assert.throws(() => assertReportDate('../../etc/passwd'))
+  assert.throws(() => assertReportDate('2026-11-16/../x'))
+  assert.throws(() => assertReportDate('2026-13-40'))
+  assert.throws(() => assertReportDate(''))
+  assert.equal(assertReportDate('2026-11-16'), '2026-11-16')
+})
+
+await atest('N12 runDigest refuses a traversal date before touching the disk', async () => {
+  const api = { dailyJson: async () => ({ report: { date: '../../evil', sections: [] } }) }
+  let threw = null
+  try {
+    await runDigest(api, { webhook: { channel: 'none' }, digest: {} }, { send: async () => ({ ok: true }) })
+  } catch (e) { threw = e }
+  assert.ok(threw && /report\.date/.test(threw.message), 'rejects instead of writing outside digest/: ' + (threw && threw.message))
+})
+
+// ---- P: shared-file honesty — every writer merges, no writer publishes a stale
+// ---- snapshot, and a holder that lost the lock must not touch the file ----
+const renderState = (state) => JSON.parse(JSON.stringify(state))
+const withTempHome = async (fn) => {
+  const prev = process.env.DSH_HOME
+  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'aihot-state-'))
+  try { return await fn(process.env.DSH_HOME) } finally {
+    if (prev === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prev
+  }
+}
+
+await atest('P1 a stale snapshot cannot wipe seen or revert the webhook', async () => {
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    const live = loadState()
+    live.seen.codex = ['e1:announced']
+    live.webhook = { channel: 'wecom', url: 'https://a', secret: '' }
+    assert.equal(saveState(live), true, 'radar-style save')
+
+    // A second instance opened the panel before that write: its copy has no seen
+    // keys, and it only changes the webhook.
+    const stale = renderState(live)
+    stale.seen = {}
+    stale.webhook = { channel: 'dingtalk', url: 'https://b', secret: '' }
+    assert.equal(saveState(stale, undefined, { own: ['webhook'] }), true)
+
+    const disk = JSON.parse(readFileSync(join(process.env.DSH_HOME, 'aihot-radar', 'state.json'), 'utf8'))
+    assert.deepEqual(disk.seen.codex, ['e1:announced'], 'seen survived a panel save')
+    assert.equal(disk.webhook.channel, 'dingtalk', 'the section it owned did win')
+  })
+})
+
+await atest('P2 a digest save cannot revert the webhook or the seen keys', async () => {
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    const live = loadState()
+    live.seen.claude = ['c1:announced']
+    live.webhook = { channel: 'feishu', url: 'https://open.feishu.cn/x', secret: '' }
+    saveState(live)
+
+    const digestSide = renderState(live)
+    digestSide.webhook = { channel: 'none', url: '', secret: '' } // stale copy from before
+    digestSide.seen = {}
+    digestSide.digest = { ...digestSide.digest, lastDate: '2026-11-16' }
+    assert.equal(saveState(digestSide, undefined, { own: ['digest'] }), true)
+
+    const disk = JSON.parse(readFileSync(join(process.env.DSH_HOME, 'aihot-radar', 'state.json'), 'utf8'))
+    assert.equal(disk.webhook.channel, 'feishu', 'digest must not revert the webhook')
+    assert.deepEqual(disk.seen.claude, ['c1:announced'], 'nor the dedupe keys')
+    assert.equal(disk.digest.lastDate, '2026-11-16', 'but it does own lastDate')
+  })
+})
+
+await atest('P3 a holder that lost the lock refuses to write or delete it', async () => {
+  const { loadState, saveState, acquireStateLock, touchStateLock } = await import('../lib/state.js')
+  await withTempHome(async (home) => {
+    const state = loadState()
+    const release = acquireStateLock()
+    assert.ok(release, 'acquired')
+
+    // Another process took over (e.g. ours was suspended past the TTL).
+    writeFileSync(join(home, 'aihot-radar', 'state.json.lock'), JSON.stringify({ pid: 999999, ts: Date.now(), token: 'foreign' }))
+    assert.equal(touchStateLock(), false, 'renewing a lost lock is refused')
+
+    state.seen.codex = ['x:announced']
+    assert.equal(saveState(state), false, 'must not clobber the new holder')
+    assert.equal(existsSync(join(home, 'aihot-radar', 'state.json')), false, 'nothing written')
+
+    release()
+    const left = JSON.parse(readFileSync(join(home, 'aihot-radar', 'state.json.lock'), 'utf8'))
+    assert.equal(left.token, 'foreign', 'releasing must not delete someone else lock')
+  })
+})
+
+await atest('P4 an unconfigured channel pauses instead of burning the retry budget', async () => {
+  const state = { seen: {}, webhook: { channel: 'none', url: '', secret: '' }, lastCheck: {}, delivery: {} }
+  const api = { resetsRecent: async () => ({ events: [mkEvent('p4')] }) }
+  let calls = 0
+  const notifier = { send: async () => { calls++; return { ok: false, skipped: true, error: 'no webhook configured', chunks: 0 } } }
+  for (let i = 0; i < 8; i++) await scanProvider(api, 'codex', state, notifier)
+  assert.equal(calls, 8, 'still checked every cycle')
+  assert.deepEqual(state.seen.codex, [], 'the event is still pending, not retired')
+  assert.deepEqual(state.delivery.codex, {}, 'no retry budget was spent')
+
+  const r = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(r.paused.length, 1, 'reported as paused')
+  assert.equal(r.gaveUp.length, 0)
+})
+
+await atest('P5 a body that dies after the headers is delivery-unknown, not retryable', async () => {
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    headers: { get: () => 'application/json' },
+    text: async () => { const e = new Error('terminated'); e.name = 'AbortError'; throw e },
+  })
+  const n = createNotifier({ fetchImpl })
+  const r = await n.send({ channel: 'wecom', url: 'https://x' }, 't', 'body')
+  assert.equal(r.ok, false)
+  assert.equal(r.timeout, true, 'classified as uncertain')
+  assert.equal(r.retryable, false, 'and never auto-resent')
+  assert.ok(/送达不确定/.test(r.error), r.error)
+})
+
+// ---- R: digest delivery semantics + config that arrives from another instance --
+await atest('R1 a timed-out digest is recorded uncertain and never retried', async () => {
+  const { digestOutcome, alreadyHandledToday } = await import('../lib/digest.js')
+  const state = { digest: {} }
+  const out = digestOutcome(
+    state,
+    { ok: false, date: '2026-11-16', result: { ok: false, timeout: true, error: '请求超时（15000ms），送达不确定' } },
+    '2026-11-16',
+  )
+  assert.equal(out.retry, false, 'no 10-minute resend of a maybe-delivered card')
+  assert.equal(out.uncertain, true)
+  assert.equal(state.digest.retries, 0, 'and it does not burn the retry budget')
+  assert.equal(state.digest.uncertain.date, '2026-11-16')
+  assert.equal(alreadyHandledToday(state, '2026-11-16'), true, 'a restart must not catch it up either')
+  assert.equal(alreadyHandledToday(state, '2026-11-17'), false, 'tomorrow is a fresh day')
+
+  const definite = { digest: {} }
+  const out2 = digestOutcome(definite, { ok: false, date: '2026-11-16', result: { ok: false, status: 500, error: 'HTTP 500' } }, '2026-11-16')
+  assert.equal(out2.retry, true, 'a definite failure still retries')
+  assert.equal(definite.digest.retries, 1)
+  assert.equal(alreadyHandledToday(definite, '2026-11-16'), false)
+})
+
+await atest('R2 a digest switched off by another instance is not sent', async () => {
+  const { startDigest } = await import('../lib/digest.js')
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    // The other instance already saved "off" into the shared file.
+    const disk = loadState()
+    disk.digestPref = { enabled: false, time: null }
+    saveState(disk, undefined, { own: ['digestPref'] })
+
+    // This instance still holds the old in-memory switch (on).
+    const state = { webhook: { channel: 'wecom', url: 'https://x' }, digestPref: { enabled: true, time: null }, digest: {} }
+    let sent = 0
+    const ctl = startDigest({
+      api: { dailyJson: async () => ({ report: { date: '2026-11-16', sections: [], links: {} } }) },
+      state,
+      notifier: { send: async () => { sent++; return { ok: true, chunks: 1 } } },
+      config: { digest: { enabled: false, time: '08:30', catchUp: false } },
+      save: (s) => saveState(s, undefined, { own: ['digest'] }),
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    })
+    try {
+      await ctl.tick()
+      assert.equal(sent, 0, 'the switch must be re-read after merging the disk config')
+      assert.equal(state.digest.lastDate, undefined, 'and nothing is marked as sent')
+    } finally { ctl.stop() }
+  })
+})
+
+await atest('R3 a config-only save keeps the newest delivery records', async () => {
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    const live = loadState()
+    live.delivery = { codex: { 'e1:announced': { attempts: 2, state: 'retrying', at: '2026-11-16T07:00:00.000Z', error: 'HTTP 500' } } }
+    saveState(live, undefined, { own: ['delivery'] })
+
+    // Older instance: knows the provider key but has no records under it.
+    const stale = renderState(live)
+    stale.delivery = { codex: {} }
+    stale.webhook = { channel: 'bark', url: 'https://bark/x', secret: '' }
+    saveState(stale, undefined, { own: ['webhook'] })
+
+    const disk = JSON.parse(readFileSync(join(process.env.DSH_HOME, 'aihot-radar', 'state.json'), 'utf8'))
+    assert.equal(disk.delivery.codex['e1:announced']?.attempts, 2, 'delivery survived a config-only save')
+    assert.equal(disk.webhook.channel, 'bark')
+  })
+})
+
+await atest('R4 a cleared delivery record must not be resurrected by a config save', async () => {
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async (home) => {
+    const file = () => JSON.parse(readFileSync(join(home, 'aihot-radar', 'state.json'), 'utf8'))
+
+    const live = loadState()
+    live.delivery = { codex: { 'e1:announced': { attempts: 2, state: 'retrying', at: '2026-11-16T07:00:00.000Z', error: 'HTTP 500' } } }
+    saveState(live, undefined, { own: ['delivery'] })
+    assert.equal(file().delivery.codex['e1:announced'].attempts, 2)
+
+    // The radar retries, the push succeeds, the record is cleared.
+    const radar = renderState(live)
+    radar.delivery = { codex: {} }
+    saveState(radar, undefined, { own: ['delivery'] })
+    assert.deepEqual(file().delivery.codex, {}, 'the owner deleted the record')
+
+    // An older panel instance still holds it and saves an unrelated webhook.
+    const stale = renderState(live)
+    stale.webhook = { channel: 'bark', url: 'https://bark/x', secret: '' }
+    saveState(stale, undefined, { own: ['webhook'] })
+
+    assert.equal(file().delivery.codex['e1:announced'], undefined, 'a cleared record must stay cleared')
+    assert.equal(file().webhook.channel, 'bark', 'the owned section still applies')
+  })
+})
+
+await atest('R5 a stale instance cannot resurrect trimmed seen keys either', async () => {
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async (home) => {
+    const file = () => JSON.parse(readFileSync(join(home, 'aihot-radar', 'state.json'), 'utf8'))
+    const live = loadState()
+    live.seen = { codex: ['e1:announced', 'e2:announced'] }
+    saveState(live, undefined, { own: ['seen'] })
+
+    // Radar trims seen to the current API snapshot (e2 rolled out of the window).
+    const radar = renderState(live)
+    radar.seen = { codex: ['e1:announced'] }
+    saveState(radar, undefined, { own: ['seen'] })
+    assert.deepEqual(file().seen.codex, ['e1:announced'])
+
+    const stale = renderState(live) // still has both keys
+    stale.webhook = { channel: 'wecom', url: 'https://qyapi.weixin.qq.com/x', secret: '' }
+    saveState(stale, undefined, { own: ['webhook'] })
+
+    assert.deepEqual(file().seen.codex, ['e1:announced'], 'trimmed keys must not come back')
+  })
+})
+
+await atest('R6 radar retry-then-success: a stale panel save cannot revive the record', async () => {
+  const { loadState, saveState } = await import('../lib/state.js')
+  await withTempHome(async (home) => {
+    const file = () => JSON.parse(readFileSync(join(home, 'aihot-radar', 'state.json'), 'utf8'))
+    const state = loadState()
+    const api = { resetsRecent: async () => ({ events: [mkEvent('r6')] }) }
+    let fail = true
+    const notifier = {
+      send: async () => (fail
+        ? { ok: false, status: 500, code: 500, retryable: true, error: 'HTTP 500' }
+        : { ok: true, status: 200, chunks: 1 }),
+    }
+
+    await scanProvider(api, 'codex', state, notifier)
+    saveState(state)
+    assert.equal(file().delivery.codex['r6:announced'].state, 'retrying')
+    const stale = renderState(state) // a panel instance opened before the retry
+
+    fail = false
+    await scanProvider(api, 'codex', state, notifier)
+    saveState(state)
+    assert.equal(file().delivery.codex['r6:announced'], undefined, 'cleared once the push succeeded')
+
+    stale.webhook = { channel: 'bark', url: 'https://bark/x', secret: '' }
+    saveState(stale, undefined, { own: ['webhook'] })
+    assert.equal(file().delivery.codex['r6:announced'], undefined, 'an unrelated save must not revive it')
+    assert.equal(file().webhook.channel, 'bark')
+  })
+})
+
+// ---- T: the whole digest schedule, not just the classifier. Each case drives
+// ---- real ticks through startDigest (lock + merge + dedupe + send + save).
+const digestHarness = async (send) => {
+  const { startDigest } = await import('../lib/digest.js')
+  const { loadState, saveState } = await import('../lib/state.js')
+  const state = loadState()
+  state.webhook = { channel: 'wecom', url: 'https://x', secret: '' }
+  state.digestPref = { enabled: true, time: null }
+  const today = tzParts(new Date(), 'Asia/Shanghai').date
+  const ctl = startDigest({
+    api: { dailyJson: async () => ({ report: { date: today, sections: [], links: {} } }) },
+    state,
+    notifier: { send },
+    config: { digest: { enabled: true, time: '08:30', timezone: 'Asia/Shanghai' } },
+    save: (s) => saveState(s, undefined, { own: ['digest'] }),
+    logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+  })
+  return { ctl, state, today }
+}
+
+await atest('T1 a timed-out digest is not re-sent by a later tick or a reschedule', async () => {
+  await withTempHome(async () => {
+    let calls = 0
+    const h = await digestHarness(async () => {
+      calls++
+      return { ok: false, status: 0, code: 0, timeout: true, retryable: false, error: '请求超时，送达不确定' }
+    })
+    try {
+      await h.ctl.tick()
+      assert.equal(calls, 1)
+      assert.equal(h.state.digest.uncertain.date, h.today, 'recorded as uncertain')
+      assert.equal(h.state.digest.lastDate, null, 'uncertain is not "delivered"')
+
+      // Same period, again: another instance's queued timer, then a reschedule
+      // after the panel edited the send time. Neither may push it twice.
+      await h.ctl.tick()
+      h.ctl.reschedule()
+      await h.ctl.tick()
+      assert.equal(calls, 1, 'a timed-out digest must not be re-sent the same day')
+    } finally { h.ctl.stop() }
+  })
+})
+
+await atest('T2 a delivered digest is not re-sent by tick or reschedule either', async () => {
+  await withTempHome(async () => {
+    let calls = 0
+    const h = await digestHarness(async () => { calls++; return { ok: true, status: 200, chunks: 1 } })
+    try {
+      await h.ctl.tick()
+      assert.equal(calls, 1)
+      assert.equal(h.state.digest.lastDate, h.today)
+      await h.ctl.tick()
+      h.ctl.reschedule()
+      await h.ctl.tick()
+      assert.equal(calls, 1, 'lastDate blocks the repeat')
+    } finally { h.ctl.stop() }
+  })
+})
+
+await atest('T3 a definite failure still retries on the next tick', async () => {
+  await withTempHome(async () => {
+    let calls = 0
+    const h = await digestHarness(async () => { calls++; return { ok: false, status: 500, code: 500, error: 'HTTP 500' } })
+    try {
+      await h.ctl.tick()
+      assert.equal(calls, 1)
+      assert.equal(h.state.digest.retries, 1)
+      await h.ctl.tick()
+      assert.equal(calls, 2, 'the uncertain guard must not swallow real failures')
+      assert.equal(h.state.digest.uncertain, undefined)
+    } finally { h.ctl.stop() }
+  })
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)
