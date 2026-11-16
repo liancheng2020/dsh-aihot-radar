@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-16
 
 ### Added
 - **面板内配置推送通道**：`POST /webhook` 保存并可立即测试，保存即生效无需重启；Origin 白名单 + `Sec-Fetch-Site` 校验（放行宿主壳 `dsh-app://`），`/status` 只回脱敏 host。
@@ -82,5 +82,6 @@ All notable changes to this project are documented here. Format follows
 - 多实例（desktop + web）重复推送；`state.json` 损坏导致启动失败。
 - 自测依赖真实日期、结果不可复现。
 
+[0.3.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.3.0
 [0.2.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.2.0
 [0.1.2]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.1.2
