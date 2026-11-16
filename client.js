@@ -39,6 +39,40 @@ window.__ModuleLoader__.load({
     }
     const sampleQuestion = (name) => (SAMPLE[name] || ['', ''])[LANG === 'en' ? 1 : 0]
 
+    // Keep in sync with the ADAPTERS keys in lib/notify.js. 'none' is not a
+    // choice here — turning push off is a separate action, not a channel.
+    const CHANNELS = ['wecom', 'dingtalk', 'feishu', 'bark', 'serverchan', 'telegram', 'generic']
+    const URL_HINT = {
+      wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…',
+      dingtalk: 'https://oapi.dingtalk.com/robot/send?access_token=…',
+      feishu: 'https://open.feishu.cn/open-apis/bot/v2/hook/…',
+      bark: 'https://api.day.app/your-key',
+      serverchan: 'https://sctapi.ftqq.com/SCT….send',
+      telegram: '123456789:AA…',
+      generic: 'https://example.com/webhook',
+    }
+    // Paste a URL and the channel follows: picking the wrong one was the most
+    // common first-run failure.
+    const CHANNEL_BY_HOST = {
+      'qyapi.weixin.qq.com': 'wecom',
+      'oapi.dingtalk.com': 'dingtalk',
+      'open.feishu.cn': 'feishu',
+      'api.day.app': 'bark',
+      'sctapi.ftqq.com': 'serverchan',
+      'api.telegram.org': 'telegram',
+    }
+    const detectChannel = (raw) => {
+      const s = String(raw || '').trim()
+      if (!s) return ''
+      if (/^\d+:[\w-]{10,}$/.test(s)) return 'telegram' // bot token, not a url
+      try {
+        return CHANNEL_BY_HOST[new URL(/^https?:\/\//i.test(s) ? s : 'https://' + s).host] || ''
+      } catch { return '' }
+    }
+    // Fallback for when the loopback bridge is unreachable (https page or
+    // remote host): a snippet to paste into state.json by hand.
+    const WEBHOOK_SNIPPET = '{ "webhook": { "channel": "wecom", "url": "<你的 webhook 地址>", "secret": "" } }'
+
     const L = {
       zh: {
         'meta.title': 'AIHOT 雷达',
@@ -51,7 +85,7 @@ window.__ModuleLoader__.load({
         'sec.pending': '待生效预告', 'sec.recent': '最近事件', 'sec.tools': '资讯工具',
         'empty.pending': '当前没有待生效的重置预告', 'empty.loading': '加载中…', 'empty.recent': '近 7 天无记录',
         'tools.hint': '点击卡片复制示例问句，去对话粘贴即可调用；也可直接提问，例如「今天 AI 圈发生了什么」',
-        'status.checkedAt': 'AIHOT 核对于 {t}', 'status.refreshedAt': '面板刷新于 {t}',
+        'status.checkedAt': 'AIHOT 核对于 {t}', 'status.refreshedAt': '面板刷新于 {t}', 'status.tz': '（北京时间）',
         'status.askAgent': '后台推送状态可向 Agent 提问（aihot_radar_status）',
         'badge.announced': '预告', 'badge.confirmed': '已到账',
         'reset.default': '额度重置', 'outage': '服务故障公告：{t}', 'outage.recovered': '已恢复', 'estimate': '预计：{t}',
@@ -66,11 +100,28 @@ window.__ModuleLoader__.load({
         'tool.latest': '最近 AI 重点资讯', 'tool.search': '关键词搜索资讯', 'tool.hot': '当前 AI 热榜',
         'tool.daily': 'AIHOT 日报', 'tool.report': '周报 / 月报', 'tool.story': '热点事件时间线', 'tool.resets': '额度重置记录',
         'tools.copied': '已复制示例问句 · 去对话粘贴即可调用', 'tools.copiedTitle': '已复制示例问句，', 'tools.copiedBody': '去对话粘贴即可调用', 'tools.copiedShort': '已复制 ✓', 'tools.copyFail': '复制失败，请手动复制：',
-        'sec.push': '推送通道', 'push.channel': 'webhook 通道：{c}', 'push.on': '已配置', 'push.off': '未配置',
-        'push.hint': '配置 webhook 后，预告/到账与 AI 日报将推送到你的 IM。',
-        'push.test': '发送测试推送', 'push.testing': '发送中…', 'push.testOk': '测试推送成功，通道正常。', 'push.testFail': '测试推送失败：{e}',
-        'push.copyConfig': '复制配置片段', 'push.copied': '配置片段已复制', 'push.copyFail': '复制失败，请手动复制',
-        'push.bridge': '宿主桥接不可用（web 端可能受限）。可用 aihot_radar_status 工具查询推送状态。',
+        'sec.push': '推送通道', 'push.channel': '推送通道：{c}', 'push.on': '已配置', 'push.off': '未配置',
+        'chan.none': '未配置', 'chan.wecom': '企业微信', 'chan.dingtalk': '钉钉', 'chan.feishu': '飞书',
+        'chan.bark': 'Bark', 'chan.serverchan': 'Server酱', 'chan.telegram': 'Telegram', 'chan.generic': '通用 Webhook',
+        'push.hint': '预告/到账与 AI 日报将推送到这里，保存即生效，无需重启。',
+        'push.empty': '还没有配置推送通道。填好地址保存，就能收到额度重置与日报。',
+        'push.banner': '推送还没配置：配好后重置预告与日报会自动推到你的 IM。',
+        'push.bannerCta': '现在配置', 'push.retry': '重试',
+        'push.snippet': '复制 webhook 配置', 'push.snippetCopied': '配置片段已复制，粘到 state.json 的 webhook 字段',
+        'push.bridgePath': '或手动编辑：',
+        'push.copyDiag': '复制诊断信息', 'push.diagCopied': '诊断信息已复制',
+        'push.diag.https': '当前面板页面是 {o}（https），浏览器禁止它访问 http://127.0.0.1（混合内容拦截）——这种环境下面板无法直连宿主。',
+        'push.diag.cors': '宿主可达，但面板来源 {o} 没有被放行（安全白名单）。请复制诊断信息反馈给作者。',
+        'push.diag.down': '连不上 127.0.0.1:17420：本地桥接未启动、端口被占用，或页面 CSP 拦了该请求。查宿主日志有无「本地桥接已监听 127.0.0.1:17420」。',
+        'push.current': '当前地址：{h}',
+        'push.field.channel': '推送通道', 'push.field.url': 'Webhook 地址', 'push.field.token': 'Bot Token',
+        'push.field.secret': '加签密钥（可选）', 'push.field.chat': 'chat_id',
+        'push.saveTest': '保存并发送测试', 'push.save': '仅保存', 'push.saving': '保存中…',
+        'push.edit': '修改', 'push.cancel': '取消', 'push.saved': '已保存，下一轮推送即生效。',
+        'push.disable': '关闭推送', 'push.disableConfirm': '确认关闭？', 'push.disabled': '已关闭推送，可随时重新配置。',
+        'push.test': '发送测试推送', 'push.testing': '发送中…',
+        'push.testOk': '测试推送成功：{c} 通道正常，发出 {n} 条。', 'push.testFail': '测试推送失败：{e}',
+        'push.bridge': '面板拿不到宿主状态，所以这里配不了。具体原因见下一行；也可以复制下面的配置手填到 state.json 的 webhook 字段，保存后重启 DSH。',
         'foot.feedback': '反馈/报障',
       },
       en: {
@@ -84,7 +135,7 @@ window.__ModuleLoader__.load({
         'sec.pending': 'Pending announcements', 'sec.recent': 'Recent events', 'sec.tools': 'News tools',
         'empty.pending': 'No pending reset announcements', 'empty.loading': 'Loading…', 'empty.recent': 'No records in 7 days',
         'tools.hint': 'Click a card to copy a sample question, then paste it in chat; or just ask, e.g. "what happened in AI today"',
-        'status.checkedAt': 'AIHOT checked at {t}', 'status.refreshedAt': 'Panel refreshed at {t}',
+        'status.checkedAt': 'AIHOT checked at {t}', 'status.refreshedAt': 'Panel refreshed at {t}', 'status.tz': ' (Beijing time)',
         'status.askAgent': 'Ask the agent for push status (aihot_radar_status)',
         'badge.announced': 'Announced', 'badge.confirmed': 'Confirmed',
         'reset.default': 'Quota reset', 'outage': 'Service outage: {t}', 'outage.recovered': 'recovered', 'estimate': 'Expected: {t}',
@@ -99,11 +150,28 @@ window.__ModuleLoader__.load({
         'tool.latest': 'Latest AI highlights', 'tool.search': 'Keyword news search', 'tool.hot': 'Current AI trending',
         'tool.daily': 'AIHOT daily', 'tool.report': 'Weekly / monthly', 'tool.story': 'Event timeline', 'tool.resets': 'Quota-reset records',
         'tools.copied': 'Sample question copied · paste it in chat to invoke', 'tools.copiedTitle': 'Sample question copied, ', 'tools.copiedBody': 'paste it in chat to invoke', 'tools.copiedShort': 'Copied ✓', 'tools.copyFail': 'Copy failed, copy manually: ',
-        'sec.push': 'Push channel', 'push.channel': 'webhook channel: {c}', 'push.on': 'Configured', 'push.off': 'Not set',
-        'push.hint': 'With a webhook, announcements / confirmations and the AI digest push to your IM.',
-        'push.test': 'Send test push', 'push.testing': 'Sending…', 'push.testOk': 'Test push succeeded; channel works.', 'push.testFail': 'Test push failed: {e}',
-        'push.copyConfig': 'Copy config snippet', 'push.copied': 'Config snippet copied', 'push.copyFail': 'Copy failed, copy manually',
-        'push.bridge': 'Host bridge unavailable (may be limited on web). Use the aihot_radar_status tool for push status.',
+        'sec.push': 'Push channel', 'push.channel': 'Push channel: {c}', 'push.on': 'Configured', 'push.off': 'Not set',
+        'chan.none': 'Not set', 'chan.wecom': 'WeCom', 'chan.dingtalk': 'DingTalk', 'chan.feishu': 'Feishu',
+        'chan.bark': 'Bark', 'chan.serverchan': 'ServerChan', 'chan.telegram': 'Telegram', 'chan.generic': 'Generic webhook',
+        'push.hint': 'Reset announcements / confirmations and the AI digest push here. Saving applies immediately.',
+        'push.empty': 'No push channel yet. Fill in the URL and save to receive reset alerts and the digest.',
+        'push.banner': 'Push is not configured yet — reset alerts and the digest will go to your IM once it is.',
+        'push.bannerCta': 'Set it up', 'push.retry': 'Retry',
+        'push.snippet': 'Copy webhook config', 'push.snippetCopied': 'Snippet copied; paste it into the webhook field of state.json',
+        'push.bridgePath': 'Or edit it yourself:',
+        'push.copyDiag': 'Copy diagnostics', 'push.diagCopied': 'Diagnostics copied',
+        'push.diag.https': 'This panel is served over {o} (https), so the browser blocks http://127.0.0.1 (mixed content) — the panel cannot reach the host here.',
+        'push.diag.cors': 'The host is reachable but does not accept requests from {o}. Send the diagnostics to the author.',
+        'push.diag.down': 'Cannot reach 127.0.0.1:17420: the bridge is not running, the port is taken, or the page CSP blocks it. Check host logs for "本地桥接已监听 127.0.0.1:17420".',
+        'push.current': 'Endpoint: {h}',
+        'push.field.channel': 'Channel', 'push.field.url': 'Webhook URL', 'push.field.token': 'Bot Token',
+        'push.field.secret': 'Sign secret (optional)', 'push.field.chat': 'chat_id',
+        'push.saveTest': 'Save and send test', 'push.save': 'Save only', 'push.saving': 'Saving…',
+        'push.edit': 'Edit', 'push.cancel': 'Cancel', 'push.saved': 'Saved; applies from the next push.',
+        'push.disable': 'Turn off', 'push.disableConfirm': 'Confirm?', 'push.disabled': 'Push turned off; configure it again anytime.',
+        'push.test': 'Send test push', 'push.testing': 'Sending…',
+        'push.testOk': 'Test push via {c} succeeded, {n} message(s) sent.', 'push.testFail': 'Test push failed: {e}',
+        'push.bridge': 'The panel cannot read host state, so it cannot save here. See the cause on the next line; you can also copy the config below into the webhook field of state.json and restart DSH.',
         'foot.feedback': 'Feedback',
       },
     }
@@ -153,6 +221,18 @@ window.__ModuleLoader__.load({
       live: { width: 7, height: 7, borderRadius: '50%', background: T.success, animation: 'aihot-pulse 2.4s infinite' },
       sub: { color: T.tertiary, fontSize: 12, margin: '3px 0 0' },
       btn: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.layer1, color: T.sub, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
+      btnPrimary: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(91,140,255,0.45)', background: 'rgba(91,140,255,0.16)', color: T.brand, fontWeight: 600, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
+      field: { marginBottom: 9 },
+      fieldLabel: { display: 'block', fontSize: 11.5, color: T.tertiary, marginBottom: 4 },
+      input: { boxSizing: 'border-box', width: '100%', font: 'inherit', fontSize: 12, padding: '7px 10px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.base, color: T.text, outline: 'none' },
+      // Native <select> popups ignore most styling; colorScheme: 'dark' is what
+      // makes Chromium render the list dark instead of grey-on-grey.
+      select: { boxSizing: 'border-box', width: '100%', font: 'inherit', fontSize: 12, padding: '7px 10px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.base, color: T.text, outline: 'none', colorScheme: 'dark', cursor: 'pointer' },
+      option: { background: T.layer1, color: T.text },
+      banner: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', padding: '9px 12px', marginBottom: 16, borderRadius: 10, border: `1px solid ${T.borderSoft}`, borderLeft: `3px solid ${T.brand}`, background: 'rgba(91,140,255,0.10)' },
+      bannerText: { fontSize: 12, color: T.sub },
+      bridgeBox: { padding: '12px 14px', background: T.layer1, border: `1px dashed ${T.border}`, borderRadius: 10 },
+      pathLine: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5, color: T.brand, marginTop: 6, wordBreak: 'break-all' },
       tabs: { display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${T.borderSoft}`, paddingBottom: 12 },
       tab: { fontSize: 13, fontWeight: 600, padding: '7px 16px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', color: T.tertiary, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 7 },
       tabActive: { background: 'rgba(91,140,255,0.12)', border: `1px solid rgba(91,140,255,0.35)`, color: T.brand },
@@ -444,8 +524,14 @@ window.__ModuleLoader__.load({
       const [copied, setCopied] = useState(null)
       const [toast, setToast] = useState(null)
       const [host, setHost] = useState(null)
-      const [testing, setTesting] = useState(false)
-      const [testResult, setTestResult] = useState(null)
+      const [editing, setEditing] = useState(false)
+      const [form, setForm] = useState({ channel: 'wecom', url: '', secret: '' })
+      const [busy, setBusy] = useState('')       // '' | 'save' | 'test'
+      const [result, setResult] = useState(null) // { ok, message, hint }
+      const [retry, setRetry] = useState(0)
+      const [offConfirm, setOffConfirm] = useState(false)
+      const [bridgeErr, setBridgeErr] = useState('')
+      const [bridgeDiag, setBridgeDiag] = useState('')
 
       useEffect(() => {
         if (!toast) return
@@ -453,9 +539,28 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(id)
       }, [toast])
 
+      const copyText = (text) => new Promise((resolve) => {
+        const fallback = () => {
+          try {
+            if (!document.body) return resolve(false)
+            const ta = document.createElement('textarea')
+            ta.value = text
+            ta.style.position = 'fixed'; ta.style.opacity = '0'
+            document.body.appendChild(ta)
+            ta.select()
+            const ok = document.execCommand('copy')
+            ta.remove()
+            resolve(ok)
+          } catch { resolve(false) }
+        }
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => resolve(true), fallback)
+        } else fallback()
+      })
+
       const copyQuestion = (name) => {
         const q = sampleQuestion(name)
-        const done = (ok) => {
+        copyText(q).then((ok) => {
           setCopied(ok ? name : null)
           setToast({
             ok,
@@ -463,63 +568,120 @@ window.__ModuleLoader__.load({
             body: ok ? t('tools.copiedBody') : q,
             n: Date.now(),
           })
-        }
-        const fallback = () => {
-          if (!document.body) return done(false)
-          try {
-            const ta = document.createElement('textarea')
-            ta.value = q
-            ta.style.position = 'fixed'; ta.style.opacity = '0'
-            document.body.appendChild(ta)
-            ta.select()
-            const ok = document.execCommand('copy')
-            ta.remove()
-            done(ok)
-          } catch { done(false) }
-        }
-        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(q).then(() => done(true), fallback)
-        } else fallback()
+        })
       }
 
+      const copySnippet = () => {
+        copyText(WEBHOOK_SNIPPET).then((ok) => {
+          setToast({ ok, title: ok ? t('push.snippetCopied') : t('tools.copyFail'), body: ok ? '' : WEBHOOK_SNIPPET, n: Date.now() })
+        })
+      }
+
+      const pageOrigin = () => {
+        try { return (typeof location !== 'undefined' && location.origin) || 'unknown' } catch { return 'unknown' }
+      }
+
+      // "Failed to fetch" covers three different problems. Classify it so the
+      // user knows which one they hit, and support gets one pasteable line:
+      // https page = browser blocks http://127.0.0.1; a no-cors probe that
+      // resolves = host is up but rejecting us; rejects = nothing listening.
+      const diagnoseBridge = async () => {
+        if (typeof location !== 'undefined' && location.protocol === 'https:') return t('push.diag.https', { o: pageOrigin() })
+        try {
+          await fetch(LOCAL_API + '/status', { mode: 'no-cors', cache: 'no-store' })
+          return t('push.diag.cors', { o: pageOrigin() })
+        } catch { return t('push.diag.down') }
+      }
+
+      // The host may still be activating when the panel mounts: retry briefly
+      // instead of parking the push block in "bridge unavailable" forever.
       useEffect(() => {
         let cancelled = false
-        ;(async () => {
+        let timer = null
+        let attempt = 0
+        const load = async () => {
           try {
             const res = await fetch(LOCAL_API + '/status', { headers: { Accept: 'application/json' } })
             if (!res.ok) throw new Error('http ' + res.status)
             const j = await res.json()
-            if (!cancelled) setHost(j)
-          } catch { if (!cancelled) setHost(null) }
-        })()
-        return () => { cancelled = true }
-      }, [nonce])
+            if (cancelled) return
+            setBridgeErr(''); setBridgeDiag(''); setHost(j); if (!j.configured) setEditing(true)
+          } catch (e) {
+            if (cancelled) return
+            if (attempt < 2) { attempt++; timer = setTimeout(load, attempt * 500); return }
+            const diag = await diagnoseBridge()
+            if (cancelled) return
+            setBridgeErr(String(e?.message || e)); setBridgeDiag(diag); setHost(null)
+          }
+        }
+        load()
+        return () => { cancelled = true; if (timer) clearTimeout(timer) }
+      }, [nonce, retry])
+
+      const copyDiag = () => {
+        const payload = `origin=${pageOrigin()}\nbridge=${LOCAL_API}/status\nfetch=${bridgeErr || 'n/a'}\ndiag=${bridgeDiag || 'n/a'}`
+        copyText(payload).then((ok) => {
+          setToast({ ok, title: ok ? t('push.diagCopied') : t('tools.copyFail'), body: ok ? '' : payload, n: Date.now() })
+        })
+      }
+
+      const post = async (path, body) => {
+        const res = await fetch(LOCAL_API + path, body === undefined
+          ? { method: 'POST' }
+          : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        return res.json()
+      }
 
       const testPush = async () => {
-        setTesting(true); setTestResult(null)
+        setBusy('test'); setResult(null)
         try {
-          const res = await fetch(LOCAL_API + '/test-push', { method: 'POST' })
-          setTestResult(await res.json())
-        } catch (e) { setTestResult({ ok: false, error: String(e?.message || e) }) }
-        setTesting(false)
+          const j = await post('/test-push')
+          setResult(j.ok
+            ? { ok: true, message: t('push.testOk', { c: j.channel || '', n: j.chunks || 1 }) }
+            : { ok: false, message: j.message || j.error || '', hint: j.hint || '' })
+        } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
+        setBusy('')
       }
 
-      const copyConfig = () => {
-        const snippet = `- id: aihot-radar\n  name: dsh-aihot-radar\n  config:\n    radar:\n      enabled: true\n    digest:\n      enabled: true\n      time: "08:30"\n      timezone: Asia/Shanghai\n    notify:\n      signature: true\n`
-        const done = (ok) => setToast({ ok, title: ok ? t('push.copied') : t('push.copyFail'), n: Date.now() })
-        const fallback = () => {
-          if (!document.body) return done(false)
-          try {
-            const ta = document.createElement('textarea')
-            ta.value = snippet; ta.style.position = 'fixed'; ta.style.opacity = '0'
-            document.body.appendChild(ta); ta.select()
-            const ok = document.execCommand('copy'); ta.remove(); done(ok)
-          } catch { done(false) }
-        }
-        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(snippet).then(() => done(true), fallback)
-        } else fallback()
+      // Save first, then test: a failure tells the user which step broke.
+      const saveWebhook = async (thenTest) => {
+        setBusy('save'); setResult(null)
+        try {
+          const j = await post('/webhook', form)
+          if (!j.ok) { setResult({ ok: false, message: j.message || '' }); return }
+          setHost((prev) => ({ ...(prev || {}), channel: j.channel, configured: j.configured, urlHost: j.urlHost, secretSet: j.secretSet }))
+          setEditing(false)
+          setForm({ channel: j.channel, url: '', secret: '' })
+          if (thenTest) { setBusy(''); return testPush() }
+          setResult({ ok: true, message: t('push.saved') })
+        } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
+        setBusy('')
       }
+
+      const openForm = () => {
+        setForm({ channel: host?.channel && host.channel !== 'none' ? host.channel : 'wecom', url: '', secret: '' })
+        setResult(null); setOffConfirm(false); setEditing(true)
+      }
+
+      // Turning push off is a deliberate two-step action, not a dropdown value:
+      // "未配置" as a channel was confusing (it reads like a choice to make).
+      const disablePush = async () => {
+        if (!offConfirm) { setOffConfirm(true); return }
+        setOffConfirm(false); setBusy('save'); setResult(null)
+        try {
+          const j = await post('/webhook', { channel: 'none' })
+          if (!j.ok) { setResult({ ok: false, message: j.message || '' }); return }
+          setHost((prev) => ({ ...(prev || {}), channel: 'none', configured: false, urlHost: '', secretSet: false }))
+          setEditing(false)
+          setResult({ ok: true, message: t('push.disabled') })
+        } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
+        setBusy('')
+      }
+
+      // The push block sits below the fold; the top banner scrolls to it.
+      const scrollToPush = () => setTimeout(() => {
+        try { document.getElementById('aihot-push')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* noop */ }
+      }, 60)
 
       useEffect(() => {
         let cancelled = false
@@ -567,8 +729,69 @@ window.__ModuleLoader__.load({
         onMonitor(agg)
       }, [data, onMonitor])
 
+      const pushForm = () => h('div', { style: css.card },
+        host?.configured ? null : h('div', { style: { ...css.metaDim, marginBottom: 10 } }, t('push.empty')),
+        h('div', { style: css.field },
+          h('label', { style: css.fieldLabel, htmlFor: 'aihot-chan' }, t('push.field.channel')),
+          h('select', {
+            id: 'aihot-chan', style: css.select, value: form.channel,
+            onChange: (e) => setForm({ channel: e.target.value, url: '', secret: '' }),
+          }, CHANNELS.map((c) => h('option', { key: c, value: c, style: css.option }, t('chan.' + c))))),
+        form.channel === 'none' ? null : h('div', null,
+          h('div', { style: css.field },
+            h('label', { style: css.fieldLabel, htmlFor: 'aihot-url' }, form.channel === 'telegram' ? t('push.field.token') : t('push.field.url')),
+            h('input', {
+              id: 'aihot-url', style: css.input, value: form.url, spellCheck: false, autoComplete: 'off',
+              placeholder: URL_HINT[form.channel] || '',
+              onChange: (e) => {
+                const url = e.target.value
+                setForm({ ...form, url, channel: detectChannel(url) || form.channel })
+              },
+            })),
+          (form.channel === 'dingtalk' || form.channel === 'telegram') ? h('div', { style: css.field },
+            h('label', { style: css.fieldLabel, htmlFor: 'aihot-secret' }, t(form.channel === 'telegram' ? 'push.field.chat' : 'push.field.secret')),
+            h('input', {
+              id: 'aihot-secret', style: css.input, value: form.secret, spellCheck: false, autoComplete: 'off',
+              onChange: (e) => setForm({ ...form, secret: e.target.value }),
+            })) : null),
+        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          h('button', {
+            type: 'button', disabled: !!busy,
+            style: busy ? { ...css.btnPrimary, opacity: 0.6, cursor: 'not-allowed' } : css.btnPrimary,
+            onClick: () => saveWebhook(true),
+          }, busy === 'test' ? t('push.testing') : busy === 'save' ? t('push.saving') : t('push.saveTest')),
+          h('button', { type: 'button', style: css.btn, disabled: !!busy, onClick: () => saveWebhook(false) }, t('push.save')),
+          host?.configured ? h('button', {
+            type: 'button', disabled: !!busy,
+            style: { ...css.btn, color: offConfirm ? T.error : T.sub, borderColor: offConfirm ? T.error : T.border },
+            onClick: disablePush,
+          }, offConfirm ? t('push.disableConfirm') : t('push.disable')) : null,
+          host?.configured ? h('button', {
+            type: 'button', style: css.btn, disabled: !!busy,
+            onClick: () => { setEditing(false); setOffConfirm(false); setResult(null) },
+          }, t('push.cancel')) : null))
+
+      const pushSummary = () => h('div', { style: css.card },
+        h('div', { style: css.row },
+          h('span', { style: css.cardTitle }, h('span', { style: css.dot(host.configured ? T.success : T.warn) }), t('push.channel', { c: t('chan.' + host.channel) })),
+          h('span', { style: css.badgeSoft(host.configured ? T.success : T.warn) }, host.configured ? t('push.on') : t('push.off'))),
+        host.urlHost ? h('div', { style: css.metaDim }, t('push.current', { h: host.urlHost })) : null,
+        h('div', { style: css.metaDim }, host.configured ? t('push.hint') : t('push.empty')),
+        h('div', { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
+          h('button', {
+            type: 'button', disabled: !!busy || !host.configured,
+            style: busy || !host.configured ? { ...css.btn, opacity: 0.5, cursor: 'not-allowed' } : css.btn,
+            onClick: testPush,
+          }, busy === 'test' ? t('push.testing') : t('push.test')),
+          h('button', { type: 'button', style: css.btn, disabled: !!busy, onClick: openForm }, host.configured ? t('push.edit') : t('push.save'))))
+
       return h('div', null,
         failed.length ? h('div', { style: css.error }, t('err.partial', { p: failed.join('、') })) : null,
+        // The push block sits below the fold; surface it here so a first run
+        // does not stall on "there is nothing to see".
+        host && !host.configured ? h('div', { style: css.banner, className: 'aihot-banner' },
+          h('span', { style: css.bannerText }, t('push.banner')),
+          h('button', { type: 'button', style: css.btn, onClick: () => { openForm(); scrollToPush() } }, t('push.bannerCta'))) : null,
         h('div', { style: css.strip }, PROVIDERS.map((p) => h(ProviderChip, { key: p.id, provider: p, resp: data[p.id] }))),
         h('div', { style: css.section },
           h('div', { style: css.h2 }, t('sec.pending'), h('span', { style: css.count }, pending.length)),
@@ -580,20 +803,27 @@ window.__ModuleLoader__.load({
           h('div', { style: css.h2 }, t('sec.tools'), h('span', { style: css.count }, TOOLS.length)),
           h('div', { style: css.tools }, TOOLS.map(([name, key]) => h('button', { type: 'button', style: css.tool, className: 'aihot-tool' + (copied === name ? ' aihot-tool-copied' : ''), key: name, onClick: () => copyQuestion(name), title: sampleQuestion(name) }, h('span', { style: { ...css.toolDot, ...(copied === name ? { background: T.success, width: 7, height: 7 } : {}) } }), h('span', { style: css.code }, name), h('span', { style: css.toolDesc }, copied === name ? t('tools.copiedShort') : t(key))))),
           h('div', { style: { ...css.metaDim, marginTop: 10 } }, t('tools.hint'))),
-        h('div', { style: css.section },
+        h('div', { id: 'aihot-push', style: css.section },
           h('div', { style: css.h2 }, t('sec.push')),
-          host ? h('div', { style: css.card },
-            h('div', { style: css.row },
-              h('span', { style: css.cardTitle }, h('span', { style: css.dot(host.configured ? T.success : T.warn) }), t('push.channel', { c: host.channel })),
-              h('span', { style: css.badgeSoft(host.configured ? T.success : T.warn) }, host.configured ? t('push.on') : t('push.off'))),
-            h('div', { style: css.metaDim }, t('push.hint')),
-            h('div', { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
-              h('button', { type: 'button', style: { ...css.btn, ...(testing || !host.configured ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }, disabled: testing || !host.configured, onClick: testPush }, testing ? t('push.testing') : t('push.test')),
-              h('button', { type: 'button', style: css.btn, onClick: copyConfig }, t('push.copyConfig'))),
-            testResult ? h('div', { style: { color: testResult.ok ? T.success : T.error, fontSize: 12, marginTop: 8 } }, testResult.ok ? t('push.testOk') : t('push.testFail', { e: testResult.error || '' })) : null
-          ) : h('div', { style: css.metaDim }, t('push.bridge'))),
+          !host ? h('div', { style: css.bridgeBox },
+            h('div', { style: css.metaDim }, t('push.bridge')),
+            // Keep the failure reason visible: it is what separates "https
+            // blocked" from "host not running", and both need a different fix.
+            h('div', { style: css.pathLine }, `GET ${LOCAL_API}/status${bridgeErr ? ' → ' + bridgeErr : ''}`),
+            bridgeDiag ? h('div', { style: { ...css.metaDim, color: T.warn, marginTop: 4 } }, bridgeDiag) : null,
+            h('div', { style: { ...css.metaDim, marginTop: 6 } }, t('push.bridgePath')),
+            h('div', { style: css.pathLine }, '~/.dsh/aihot-radar/state.json'),
+            h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
+              h('button', { type: 'button', style: css.btn, onClick: () => setRetry((n) => n + 1) }, t('push.retry')),
+              h('button', { type: 'button', style: css.btn, onClick: copySnippet }, t('push.snippet')),
+              h('button', { type: 'button', style: css.btn, onClick: copyDiag }, t('push.copyDiag'))))
+            : h('div', null,
+              editing ? pushForm() : pushSummary(),
+              result ? h('div', { style: { marginTop: 8 } },
+                h('div', { style: { color: result.ok ? T.success : T.error, fontSize: 12 } }, result.message),
+                result.hint ? h('div', { style: { ...css.metaDim, marginTop: 4 } }, result.hint) : null) : null)),
         h('div', { style: { ...css.metaDim, marginTop: -8, marginBottom: 8 } },
-          (apiCheckedAt ? t('status.checkedAt', { t: fmtTime(apiCheckedAt) }) : '') + (apiCheckedAt && updatedAt ? ' · ' : '') + (updatedAt ? t('status.refreshedAt', { t: updatedAt.toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false }) }) : '')),
+          ((apiCheckedAt ? t('status.checkedAt', { t: fmtTime(apiCheckedAt) }) : '') + (apiCheckedAt && updatedAt ? ' · ' : '') + (updatedAt ? t('status.refreshedAt', { t: updatedAt.toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false }) }) : '')) + (apiCheckedAt || updatedAt ? t('status.tz') : '')),
         h('div', { style: { ...css.metaDim, marginBottom: 16 } }, t('status.askAgent')),
         // Floating toast: fixed positioning keeps it out of the panel's layout
         // flow, then it fades out after 2s.

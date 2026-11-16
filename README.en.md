@@ -14,7 +14,7 @@ A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset 
 > **Three things first**
 > - **No API key, zero runtime dependencies**: pure JS, no Python/Go. Data comes from the public anonymous [AIHOT](https://aihot.news) API.
 > - **Restart DSH once** after install (bundle-layer composition); the **AIHOT Radar** panel is ready.
-> - For push alerts, put a webhook in `$DSH_HOME/aihot-radar/state.json` (defaults to `~/.dsh`, see below). Without it, the in-chat news tools and panel still work.
+> - For push alerts, open the panel's **Push channel** block, pick a channel, paste the URL and hit **Save and send test** — it applies immediately, no restart. Without it, the in-chat news tools and panel still work.
 
 **This is what you get after install** (left: quota radar · right: daily report)
 
@@ -50,13 +50,15 @@ Restart DSH. The **AIHOT Radar** panel is ready.
 
 ## Configure push (optional)
 
-The webhook (it contains a secret) lives in `$DSH_HOME/aihot-radar/state.json` (default `~/.dsh/aihot-radar/state.json`), read automatically and never uploaded:
+**Use the panel**: **AIHOT Radar** → **Push channel** → pick a channel, paste the URL, hit **Save and send test**. Saving takes effect on the next push and needs **no restart**; a successful test means the whole path works.
+
+You can also edit `$DSH_HOME/aihot-radar/state.json` (default `~/.dsh/aihot-radar/state.json`), read automatically and never uploaded:
 
 ```json
 { "webhook": { "channel": "wecom", "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx", "secret": "" } }
 ```
 
-> Only add or edit the `webhook` field; `seen`, `digest` and friends are maintained by the plugin — replacing the whole file loses dedup and digest progress.
+> A manual edit needs a DSH restart. Only add or edit the `webhook` field; `seen`, `digest` and friends are maintained by the plugin — replacing the whole file loses dedup and digest progress.
 
 Channels: `wecom` (bot URL) · `dingtalk` (URL + optional signing key) · `feishu` (URL) · `bark` (`https://api.day.app/<key>`) · `serverchan` (`https://sctapi.ftqq.com/<key>.send`) · `telegram` (url = bot token, secret = chat_id) · `generic` (any JSON POST) · `none` (default, off).
 
@@ -83,8 +85,8 @@ Non-sensitive tunables go in the profile's `cordis.patch.yml`:
 
 - `radar.notifyAnnounced` / `radar.notifyConfirmed` control announcement and confirmation pushes (both on by default). Quiet hours defer pushes instead of dropping them; muted sources are marked seen so unmuting won't replay old events; the digest edition follows AIHOT's `report.date`.
 - WeCom is split at ≤3900 bytes and Telegram at ≤3800 characters (line-aware, no UTF-8 splitting), and the response body's business code is validated — HTTP 200 with a business failure still counts as a failure.
-- `notify.signature` appends `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar` to reset cards, the digest and test pushes; set `false` to drop it, or `signatureText` for your own wording.
-- The panel's "Push channel" block offers "Send test push" and "Copy config snippet" via a loopback-only bridge at `127.0.0.1:17420` (never exposes url/secret), falling back to the `aihot_radar_status` tool; `localApi.enabled: false` disables it.
+- `notify.signature` appends a one-line attribution to reset cards, the digest and test pushes (the built-in wording is Chinese). Set `signatureText` to use your own, e.g. `via dsh-aihot-radar · install: github:liancheng2020/dsh-aihot-radar`, or `false` to drop the line.
+- The panel's "Push channel" block saves the webhook (effective immediately) and offers "Send test push" via a loopback-only bridge at `127.0.0.1:17420` — it returns only the host, never the url/secret, and rejects any non-local origin (the host shell's `dsh-app://` is allowed). Falls back to the `aihot_radar_status` tool with a classified failure reason; `localApi.enabled: false` disables it.
 - No pushes wanted? Set `radar.enabled: false` (news tools and panel keep working). To uninstall, remove the plugin row from the profile and restart DSH.
 
 ## Tools

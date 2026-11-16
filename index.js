@@ -131,9 +131,9 @@ export function apply(ctx, config) {
     api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onDigest, logger: log,
   }))
 
-  // Loopback bridge for the sidebar panel (status + test push). Optional.
+  // Loopback bridge for the sidebar panel (status + save webhook + test push). Optional.
   if (config.localApi?.enabled !== false) {
-    ctx.effect(() => startLocalApi({ state, notifier, config, logger: log }))
+    ctx.effect(() => startLocalApi({ state, notifier, config, logger: log, save: (s) => saveState(s, log) }))
   }
 
   log?.info?.('aihot-radar activated: tools + quota radar + daily digest')

@@ -14,7 +14,7 @@ DSH 插件：**Codex / Claude / Antigravity 额度重置实时推送** + **AI �
 > **先看三行**
 > - **免 Key、零运行时依赖**：纯 JS，不装 Python/Go，不填任何 API Key。数据来自 [AIHOT](https://aihot.news) 公开匿名 API。
 > - 装完**重启一次** DSH（bundle 层组装），**AIHOT 雷达**面板即生效。
-> - 想要推送：把 webhook 写到本机 `$DSH_HOME/aihot-radar/state.json`（默认 `~/.dsh`，见下）。不配也能用——对话里的资讯工具和面板照常工作。
+> - 想要推送：在面板「推送通道」里选通道、粘地址、点「保存并发送测试」，保存即生效，不用重启。不配也能用——对话里的资讯工具和面板照常工作。
 
 **面板，装完就是这样**（左：额度雷达 · 右：今日日报）
 
@@ -50,13 +50,15 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
 
 ## 配置推送（可选）
 
-webhook URL 含密钥，放在本机 `$DSH_HOME/aihot-radar/state.json`（默认 `~/.dsh/aihot-radar/state.json`；插件自动读取，不上传）：
+**推荐在面板里配**：打开 **AIHOT 雷达** → 「推送通道」→ 选通道、粘地址 → **保存并发送测试**。保存即生效（下一轮推送就用新通道），**无需重启**；测试成功说明整条链路已通。
+
+也可以直接改本机 `$DSH_HOME/aihot-radar/state.json`（默认 `~/.dsh/aihot-radar/state.json`；插件自动读取，不上传）：
 
 ```json
 { "webhook": { "channel": "wecom", "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx", "secret": "" } }
 ```
 
-> 只添加或修改 `webhook` 字段；`seen`、`digest` 等字段由插件维护，整文件覆盖会丢失去重与日报进度。
+> 手改文件需重启 DSH 才生效。只添加或修改 `webhook` 字段；`seen`、`digest` 等字段由插件维护，整文件覆盖会丢失去重与日报进度。
 
 支持的 `channel`：`wecom`（企微机器人 URL）· `dingtalk`（URL + 可选加签密钥）· `feishu`（URL）· `bark`（`https://api.day.app/<key>`）· `serverchan`（`https://sctapi.ftqq.com/<key>.send`）· `telegram`（url 填 Bot Token，secret 填 chat_id）· `generic`（任意 JSON POST）· `none`（默认，不推送）。
 
@@ -84,7 +86,7 @@ webhook URL 含密钥，放在本机 `$DSH_HOME/aihot-radar/state.json`（默认
 - `radar.notifyAnnounced` / `radar.notifyConfirmed` 控制预告与到账推送（默认都开）；免打扰期间推送顺延不丢，静音来源解锁后不补刷旧事件；日报期号以 AIHOT 返回的 `report.date` 为准。
 - 企微 ≤3900 字节、Telegram ≤3800 字符自动分条（按行切、不截断中文），并校验响应体业务码——HTTP 200 但业务失败同样判失败。
 - `notify.signature` 默认在额度卡片、日报与测试推送尾部加 `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar`；`false` 关闭，或用 `signatureText` 换成自己的文案。
-- 面板「推送通道」可「发送测试推送」「复制配置片段」，经仅绑定 `127.0.0.1:17420` 的本地桥接读取状态（不暴露 url/secret），不可用时回落 `aihot_radar_status`；`localApi.enabled: false` 可关闭。
+- 面板「推送通道」可直接保存 webhook 并「发送测试推送」，保存即生效；本地桥接仅绑定 `127.0.0.1:17420`，只回 host、不暴露 url/secret。非本机来源的请求一律拒绝（宿主壳的 `dsh-app://` 会放行）。桥接不可用时回落 `aihot_radar_status`，并给出分类后的失败原因；`localApi.enabled: false` 可关闭。
 - 不想推送：`radar.enabled: false`（资讯工具与面板仍可用）；卸载：从 profile 移除该插件行并重启 DSH。
 
 ## 工具清单

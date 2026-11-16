@@ -8,7 +8,7 @@ import http from 'node:http'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { createNotifier, chunkContent, formatResetMessage, formatInferredMessage, withSignature, DEFAULT_SIGNATURE } from '../lib/notify.js'
+import { createNotifier, chunkContent, formatResetMessage, formatInferredMessage, withSignature, DEFAULT_SIGNATURE, toPlainText, toFeishuCard } from '../lib/notify.js'
 import { scanProvider } from '../lib/radar.js'
 import { validateTime, msUntilNext } from '../lib/digest.js'
 import { isQuietNow, tzParts, resolveTz } from '../lib/time.js'
@@ -17,7 +17,14 @@ import { startLocalApi } from '../lib/localapi.js'
 const here = dirname(fileURLToPath(import.meta.url))
 let passed = 0, failed = 0
 const test = (name, fn) => { try { fn(); console.log('PASS  ' + name); passed++ } catch (e) { console.log('FAIL  ' + name + '  ' + e.message); failed++ } }
-const atest = async (name, fn) => { try { await fn(); console.log('PASS  ' + name); passed++ } catch (e) { console.log('FAIL  ' + name + '  ' + e.message); failed++ } }
+// A hung socket must not stall the whole run: race every async case with a timer.
+const atest = async (name, fn) => {
+  let timer
+  const guard = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout 5s')), 5000) })
+  try { await Promise.race([fn(), guard]); console.log('PASS  ' + name); passed++ }
+  catch (e) { console.log('FAIL  ' + name + '  ' + e.message); failed++ }
+  finally { clearTimeout(timer) }
+}
 
 // ---- A5: addDays must be timezone-independent (extracted from client.js) ----
 const src = readFileSync(join(here, '../client.js'), 'utf8')
@@ -96,6 +103,68 @@ test('A1 chunkContent preserves UTF-8 (no garbled split)', () => {
   const c = chunkContent(text, 3900, 'bytes')
   assert.equal(c.join(''), text)
   assert.ok(c.every((x) => Buffer.byteLength(x, 'utf8') <= 3900))
+})
+
+// ---- A2: channels that render no markdown must not show the syntax ----
+test('A2 toPlainText flattens heading/bold/link', () => {
+  const out = toPlainText('### Codex 额度重置（预告）\n**粗体**\n- 时间：11-13\n数据来源：[AIHOT](https://aihot.news)')
+  assert.equal(out, 'Codex 额度重置（预告）\n粗体\n- 时间：11-13\n数据来源：AIHOT https://aihot.news')
+})
+
+await atest('A2 feishu sends a card; telegram flattened; wecom keeps markdown', async () => {
+  const sent = []
+  const fetchImpl = async (url, opt) => {
+    sent.push({ url, body: JSON.parse(opt.body) })
+    return { ok: true, status: 200, text: async () => JSON.stringify({ errcode: 0, code: 0, ok: true }) }
+  }
+  const n = createNotifier({ fetchImpl })
+  const md = '### 标题\n数据来源：[AIHOT](https://aihot.news)\n\nvia AIHOT 雷达 · 安装：x'
+  const plain = '### 标题\n数据来源：[AIHOT](https://aihot.news)'
+  await n.send({ channel: 'feishu', url: 'https://open.feishu.cn/x' }, 'Codex 额度重置（预告）', md)
+  await n.send({ channel: 'telegram', url: '123:abc', secret: '42' }, '标题', plain)
+  await n.send({ channel: 'wecom', url: 'https://qyapi.weixin.qq.com/x' }, '标题', plain)
+  const [feishu, telegram, wecom] = sent
+
+  const card = feishu.body.card
+  assert.equal(feishu.body.msg_type, 'interactive')
+  assert.equal(card.header.template, 'orange')
+  assert.equal(card.header.title.content, 'Codex 额度重置（预告）')
+  const div = card.elements.find((e) => e.tag === 'div')
+  assert.ok(!div.text.content.includes('###'), 'headings become bold, not "###"')
+  assert.ok(div.text.content.includes('**标题**'))
+  assert.ok(div.text.content.includes('[AIHOT](https://aihot.news)'), 'card keeps inline markdown links')
+  const note = card.elements.find((e) => e.tag === 'note')
+  assert.ok(note && note.elements[0].content.includes('via AIHOT'), 'signature moves to the note')
+  assert.ok(!div.text.content.includes('via AIHOT'), 'signature left the body')
+
+  assert.ok(!telegram.body.text.includes('###') && telegram.body.text.includes('AIHOT https://aihot.news'), 'telegram is plain')
+  assert.ok(wecom.body.markdown.content.includes('**标题**'), 'wecom keeps markdown')
+})
+
+test('A2 card colour follows the event state', () => {
+  assert.equal(toFeishuCard('X 额度重置（AIHOT 推断）', 'a').header.template, 'grey')
+  assert.equal(toFeishuCard('X 额度重置（已到账）', 'a').header.template, 'green')
+  assert.equal(toFeishuCard('X 额度重置（预告）', 'a').header.template, 'orange')
+  assert.equal(toFeishuCard('AIHOT 日报 · 2026-11-16', 'a').header.template, 'blue')
+})
+
+await atest('A2b feishu card rejected -> retried exactly once as text', async () => {
+  const bodies = []
+  const fetchImpl = async (url, opt) => {
+    const b = JSON.parse(opt.body)
+    bodies.push(b)
+    const isCard = b.msg_type === 'interactive'
+    return {
+      ok: !isCard, status: isCard ? 400 : 200,
+      text: async () => JSON.stringify(isCard ? { code: 19002, msg: 'invalid card' } : { code: 0 }),
+    }
+  }
+  const n = createNotifier({ fetchImpl })
+  const r = await n.send({ channel: 'feishu', url: 'https://open.feishu.cn/x' }, '标题', '正文')
+  assert.equal(bodies.length, 2, 'one card attempt + one text retry, never more')
+  assert.equal(bodies[0].msg_type, 'interactive')
+  assert.equal(bodies[1].msg_type, 'text')
+  assert.equal(r.ok, true, 'text fallback recovers the message')
 })
 
 // ---- Q: quiet hours (overnight wrap) + per-provider mute + defer ----
@@ -180,5 +249,100 @@ await atest('L1 bridge status configured + test-push reaches webhook', async () 
   stop(); await new Promise((r) => hook.close(r))
 })
 
+// ---- L2..L4: webhook writes (validation, persistence, cross-site denial) ----
+const wait = () => new Promise((r) => setTimeout(r, 100))
+const bridge = (port, state, extra = {}) =>
+  startLocalApi({ port, state, notifier: createNotifier(), config: { radar: {}, digest: {} }, ...extra })
+
+await atest('L2 bridge saves webhook and status reflects it without restart', async () => {
+  const state = { webhook: { channel: 'none', url: '', secret: '' } }
+  let saved = 0
+  const stop = bridge(17422, state, { save: () => { saved++; return true } })
+  await wait()
+  const j = await (await fetch('http://127.0.0.1:17422/webhook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: 'bark', url: 'https://api.day.app/k', secret: 'ignored' }),
+  })).json()
+  assert.equal(j.ok, true); assert.equal(j.configured, true); assert.equal(j.urlHost, 'api.day.app')
+  assert.equal(state.webhook.channel, 'bark'); assert.equal(state.webhook.secret, '')
+  const st = await (await fetch('http://127.0.0.1:17422/status')).json()
+  assert.equal(st.configured, true); assert.equal(st.secretSet, false); assert.equal(saved, 1)
+  stop()
+})
+
+await atest('L3 bridge rejects bad channel/url and keeps the old config', async () => {
+  const state = { webhook: { channel: 'wecom', url: 'https://qyapi.weixin.qq.com/x', secret: '' } }
+  const stop = bridge(17423, state)
+  await wait()
+  const post = (b) => fetch('http://127.0.0.1:17423/webhook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
+  }).then((r) => r.json())
+  assert.equal((await post({ channel: 'nope', url: 'https://x.y' })).code, 'bad-channel')
+  assert.equal((await post({ channel: 'feishu', url: 'ftp://x.y' })).code, 'bad-url')
+  assert.equal((await post({ channel: 'telegram', url: '123456789:AAbbccdd' })).code, 'bad-secret')
+  assert.equal(state.webhook.channel, 'wecom'); assert.equal(state.webhook.url, 'https://qyapi.weixin.qq.com/x')
+  stop()
+})
+
+await atest('L4 bridge rejects cross-site writes (no repointing, no push spam)', async () => {
+  const state = { webhook: { channel: 'none', url: '', secret: '' } }
+  const stop = bridge(17424, state)
+  await wait()
+  const raw = (headers) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: 17424, path: '/webhook', method: 'POST', headers }, (res) => {
+      res.resume(); res.on('end', () => resolve(res.statusCode))
+    })
+    req.on('error', reject); req.end('{"channel":"generic","url":"https://evil.example/h"}')
+  })
+  assert.equal(await raw({ 'Content-Type': 'application/json', Origin: 'https://evil.example' }), 403)
+  assert.equal(await raw({ 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' }), 403)
+  assert.equal(state.webhook.channel, 'none')
+  stop()
+})
+
+// Regression: the host shell (dsh-app://app) always looks cross-site when it
+// calls 127.0.0.1, so the Sec-Fetch-Site rule must not block it.
+await atest('L6 bridge accepts the app shell origin', async () => {
+  const state = { webhook: { channel: 'none', url: '', secret: '' } }
+  const stop = bridge(17426, state)
+  try {
+    await wait()
+    const res = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port: 17426, path: '/webhook', method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'dsh-app://app', 'Sec-Fetch-Site': 'cross-site' },
+      }, (r) => { const acao = r.headers['access-control-allow-origin']; r.resume(); r.on('end', () => resolve({ status: r.statusCode, acao })) })
+      req.on('error', reject)
+      req.end('{"channel":"feishu","url":"https://open.feishu.cn/open-apis/bot/v2/hook/x"}')
+    })
+    assert.equal(res.status, 200, 'shell origin must be accepted')
+    assert.equal(res.acao, '*')
+    assert.equal(state.webhook.channel, 'feishu')
+  } finally { stop() }
+})
+
+await atest('L5 test-push failure carries an actionable hint', async () => {
+  const hook = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ errcode: 93000, errmsg: 'invalid webhook url' })) })
+  })
+  await new Promise((r) => hook.listen(0, '127.0.0.1', r))
+  const state = { webhook: { channel: 'wecom', url: 'http://127.0.0.1:' + hook.address().port, secret: '' } }
+  const stop = bridge(17425, state)
+  try {
+    await wait()
+    const j = await (await fetch('http://127.0.0.1:17425/test-push', { method: 'POST' })).json()
+    assert.equal(j.ok, false)
+    assert.equal(j.code, 93000, 'business code survives the response')
+    assert.ok(String(j.hint).includes('Webhook'), 'hint explains the next step: ' + j.hint)
+  } finally {
+    // Close even when an assertion throws, or the listeners keep node alive.
+    stop(); await new Promise((r) => hook.close(r))
+  }
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed ? 1 : 0
+// Hard stop: a leaked listener must not make the run look hung. unref() so a
+// clean run still exits naturally (and flushes stdout) before this fires.
+setTimeout(() => process.exit(process.exitCode), 100).unref()

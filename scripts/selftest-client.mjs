@@ -91,10 +91,20 @@ const shLatest = () => {
   if (mins >= 480) return today
   return new Date(Date.UTC(+g.year, +g.month - 1, +g.day) - 86400000).toISOString().slice(0, 10)
 }
-const fetchMock = async (url) => {
+let hostConfigured = true
+let statusFails = 0
+const fetchMock = async (url, init) => {
   const u = String(url)
-  if (u.startsWith('http://127.0.0.1:17420/status')) return { ok: true, status: 200, json: async () => ({ channel: 'wecom', configured: true, lastResult: {}, lastCheck: {}, digest: {}, radar: { quiet: { start: '', end: '' }, muted: [] }, digestCfg: { enabled: false, time: '08:30', timezone: 'Asia/Shanghai' } }) }
-  if (u.startsWith('http://127.0.0.1:17420/test-push')) return { ok: true, status: 200, json: async () => ({ ok: true, chunks: 1 }) }
+  if (u.startsWith('http://127.0.0.1:17420/status')) {
+    if (statusFails > 0) { statusFails--; throw new Error('ECONNREFUSED') }
+    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: {}, radar: { quiet: { start: '', end: '' }, muted: [] }, digestCfg: { enabled: false, time: '08:30', timezone: 'Asia/Shanghai' } }) }
+  }
+  if (u.startsWith('http://127.0.0.1:17420/webhook')) {
+    const body = JSON.parse(init?.body || '{}')
+    const off = body.channel === 'none'
+    return { ok: true, status: 200, json: async () => ({ ok: true, channel: body.channel || 'wecom', configured: !off, urlHost: off ? '' : 'qyapi.weixin.qq.com' }) }
+  }
+  if (u.startsWith('http://127.0.0.1:17420/test-push')) return { ok: true, status: 200, json: async () => ({ ok: true, chunks: 1, channel: 'wecom' }) }
   let m = u.match(/\/api\/v1\/(\w+)-resets\/recent/)
   if (m) {
     if (m[1] === 'antigravity') return { ok: false, status: 500, json: async () => ({}) }
@@ -142,7 +152,7 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   check('B4: AIHOT 核对于', html.includes('AIHOT 核对于'))
   check('R2: 故障公告含 text 无 AIHOT 兜底', html.includes('服务故障公告') && html.includes('Codex 故障中') && !/服务故障公告：AIHOT/.test(html))
   check('B5: 部分失败汇总+其余仍在', html.includes('部分来源读取失败') && html.includes('antigravity') && html.includes('Codex'))
-  check('P1 推送区块: 测试推送/复制配置 按钮', !!findButton(tree, '发送测试推送') && !!findButton(tree, '复制配置片段'))
+  check('P1 推送区块: 状态 + 测试 + 修改', !!findButton(tree, '发送测试推送') && !!findButton(tree, '修改') && html.includes('当前地址：qyapi.weixin.qq.com'))
   check('P2 反馈入口链接', html.includes('反馈/报障'))
   const tpBtn = findButton(tree, '发送测试推送')
   tpBtn.props.onClick()
@@ -164,6 +174,81 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   dispose()
 }
 
+// ---- unconfigured: the panel opens the form instead of a dead-end hint ----
+{
+  hostConfigured = false
+  const { render, dispose } = await loadPanel('zh')
+  const tree = await render()
+  const select = [...walk(tree)].find((n) => n.type === 'select')
+  check('P3 未配置: 直接给出表单', !!select && !!findButton(tree, '保存并发送测试') && stringify(tree).includes('还没有配置推送通道'))
+  check('P4 未配置: 顶部有入口引导', stringify(tree).includes('推送还没配置') && !!findButton(tree, '现在配置'))
+  check('P4 通道下拉显示中文名', [...walk(tree)].some((n) => n.type === 'option' && textOf(n) === '飞书')
+    && ![...walk(tree)].some((n) => n.type === 'option' && textOf(n) === 'feishu'))
+
+  // Paste a URL and the channel follows (the classic first-run mistake).
+  const urlInput = [...walk(tree)].find((n) => n.type === 'input' && n.props.id === 'aihot-url')
+  urlInput.props.onChange({ target: { value: 'https://open.feishu.cn/open-apis/bot/v2/hook/abc' } })
+  let tree2 = await render()
+  check('P4 粘贴 URL 自动识别通道', [...walk(tree2)].find((n) => n.type === 'select').props.value === 'feishu')
+
+  ;[...walk(tree2)].find((n) => n.type === 'select').props.onChange({ target: { value: 'dingtalk' } })
+  tree2 = await render()
+  check('P3 切换通道: dingtalk 出现加签密钥', stringify(tree2).includes('加签密钥'))
+  findButton(tree2, '保存并发送测试').props.onClick()
+  await sleep(120)
+  const tree3 = await render()
+  check('P3 保存并测试: 回到摘要且测试成功', !!findButton(tree3, '修改') && stringify(tree3).includes('测试推送成功'))
+  dispose()
+  hostConfigured = true
+}
+
+// ---- turning push off is a deliberate action, not a dropdown value ----
+{
+  hostConfigured = true
+  const { render, dispose } = await loadPanel('zh')
+  let tree = await render()
+  findButton(tree, '修改').props.onClick()
+  tree = await render()
+  check('P7 下拉不含「未配置」，关闭是单独按钮',
+    ![...walk(tree)].some((n) => n.type === 'option' && textOf(n) === '未配置') && !!findButton(tree, '关闭推送'))
+  findButton(tree, '关闭推送').props.onClick()
+  tree = await render()
+  check('P7 关闭需二次确认', !!findButton(tree, '确认关闭？'))
+  findButton(tree, '确认关闭？').props.onClick()
+  await sleep(120)
+  tree = await render()
+  check('P7 关闭后回到未配置态', !!findButton(tree, '仅保存') && stringify(tree).includes('已关闭推送'))
+  dispose()
+}
+
+// ---- bridge down on first paint: retry instead of a permanent dead end ----
+{
+  hostConfigured = false
+  statusFails = 2
+  const { render, dispose } = await loadPanel('zh')
+  let tree = await render()
+  check('P5 桥接首次不可达: 给出降级与手填方案', stringify(tree).includes('面板拿不到宿主状态') && !!findButton(tree, '重试') && stringify(tree).includes('state.json'))
+  await sleep(2000)
+  tree = await render()
+  check('P5 自动重试后恢复成表单', !!findButton(tree, '保存并发送测试'))
+  dispose()
+  hostConfigured = true
+}
+
+// ---- bridge permanently down: name the cause instead of "Failed to fetch" ----
+{
+  hostConfigured = false
+  statusFails = 99
+  const { render, dispose } = await loadPanel('zh')
+  await render()
+  await sleep(2000)
+  const tree = await render()
+  check('P6 桥接彻底不可达: 指出具体原因', stringify(tree).includes('连不上 127.0.0.1:17420') && !!findButton(tree, '复制诊断信息'))
+  statusFails = 0
+  dispose()
+  hostConfigured = true
+}
+
 // ---- en radar tab ----
 {
   const { render, dispose } = await loadPanel('en')
@@ -176,3 +261,4 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exitCode = failed ? 1 : 0
+setTimeout(() => process.exit(process.exitCode), 100).unref()
