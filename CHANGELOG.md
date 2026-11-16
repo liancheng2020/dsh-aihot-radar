@@ -3,6 +3,33 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **面板内配置推送通道**：`POST /webhook` 保存并可立即测试，保存即生效无需重启；Origin 白名单 + `Sec-Fetch-Site` 校验（放行宿主壳 `dsh-app://`），`/status` 只回脱敏 host。
+- **面板内配置日报**：`/status` 返回 `digestCfg`（生效开关 / 时间 / 时区 / 下次触发），新增 `POST /digest` 保存偏好并即时重排定时器；偏好存 `state.json` 的 `digestPref`，与运行态 `digest` 分离，坏调度不会丢配置。
+- **发送测试日报**：`POST /digest/test` 用真实日报走完整链路（含分条），且不写 `lastDate`，不会顶掉当天真正的推送。
+- **`digest.catchUp`**：宿主在设定时间之后才启动时补发一次（默认关），仍受同日去重保护。
+- 日报卡片展示上次结果（成功日期 / 失败原因），失败不再只写日志。
+- 用例：客户端 P8–P18、宿主 L7–L10。
+- 上架材料：新增 `assets/panel-push.png`（推送配置 + 每日 AI 日报），`screenshots.json` 与中英文 README 同步引用。
+
+### Changed
+- 区块标题「推送通道」改为「推送配置」；日报时间改为主题色下拉 + 半小时间隔预设，可直接输入（`7:5` 失焦归一为 `07:05`，粘贴 `10:30:00` 会丢掉秒）。
+- 日报时间下拉补齐 combobox 语义（`aria-expanded` / `aria-activedescendant` + `listbox`/`option`，方向键选择、回车确认、Esc 关闭）；关闭定时后时间框仍可编辑，方便「先设时间再开启」。
+- `POST /digest` 支持只传部分字段（缺省即保持原值），并拒绝非布尔的 `enabled`（字符串 `"true"` 不再被静默当成关闭）。
+- 日报卡与通道卡对齐：补「已启用 / 未启用」徽章，「下次推送」独立成行；副标题不再写「默认关闭」，改为关闭态才出现的说明；动作按钮独立成行放在控件下方、主按钮在前，与 webhook 表单页脚保持一致。
+- 动作顺序统一为「轻 / 可回退在前，提交在最后」：表单页脚 `取消 → 关闭推送 → 仅保存 → 保存并发送测试`，通道卡 `发送测试推送 → 修改`，日报卡 `发送测试日报 → 保存日报设置`。位置规则与样式规则分开——只有提交类动作使用主按钮样式。
+- 「修改」改为描边按钮（与相邻按钮同款边框，但无填充底色），在提交位不再显得比主操作更重；未配置时该位置显示「保存」并保持填充样式。
+- 日报开关仍以显式偏好或 `digest.enabled` 为准——配了 webhook 不会自动开启日报，升级不改变推送行为。
+- 「下次推送」按 `digest.timezone` 显示并标注时区，精确到分。
+- 精简：`/status` 去掉无人消费的 `digestCfg.pref`；时区格式化合并为单个 `tzParts`；预设列表样式移到样式表；`lib/digest.js` 不再转出口 `validateTime`/`msUntilNext`/`beijingParts`；删除 3 个无用文案键。
+
+### Fixed
+- 宿主桥接为旧版本时提示重启 DSH，保存失败不再只显示「未知接口」。
+- 保存 / 关闭 webhook 后重新同步日报状态，避免面板开关与宿主实际行为不一致。
+- 面板重新可见时重读日报状态，长时间挂着不会一直显示过去时间的「下次推送」。
+
 ## [0.2.0] - 2026-11-13
 
 ### Added
