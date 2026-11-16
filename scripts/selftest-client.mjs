@@ -66,6 +66,7 @@ function stringify(node) {
   return `<${node.type}${attrs ? ' ' + attrs : ''}>${inner}</${node.type}>`
 }
 const findButton = (node, label) => [...walk(node)].find((n) => n.type === 'button' && textOf(n).includes(label)) || null
+const findById = (node, id) => [...walk(node)].find((n) => n.props && n.props.id === id) || null
 
 // ---- DOM stub ----
 const els = {}
@@ -92,12 +93,13 @@ const shLatest = () => {
   return new Date(Date.UTC(+g.year, +g.month - 1, +g.day) - 86400000).toISOString().slice(0, 10)
 }
 let hostConfigured = true
+let hostDigestCfg = true
 let statusFails = 0
 const fetchMock = async (url, init) => {
   const u = String(url)
   if (u.startsWith('http://127.0.0.1:17420/status')) {
     if (statusFails > 0) { statusFails--; throw new Error('ECONNREFUSED') }
-    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: {}, radar: { quiet: { start: '', end: '' }, muted: [] }, digestCfg: { enabled: false, time: '08:30', timezone: 'Asia/Shanghai' } }) }
+    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: {}, radar: { quiet: { start: '', end: '' }, muted: [] }, ...(hostDigestCfg ? { digestCfg: { enabled: false, time: '08:30', timezone: 'Asia/Shanghai', nextRunAt: Date.now() + 3600000 } } : {}) }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/webhook')) {
     const body = JSON.parse(init?.body || '{}')
@@ -105,6 +107,10 @@ const fetchMock = async (url, init) => {
     return { ok: true, status: 200, json: async () => ({ ok: true, channel: body.channel || 'wecom', configured: !off, urlHost: off ? '' : 'qyapi.weixin.qq.com' }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/test-push')) return { ok: true, status: 200, json: async () => ({ ok: true, chunks: 1, channel: 'wecom' }) }
+  if (u.startsWith('http://127.0.0.1:17420/digest')) {
+    const body = JSON.parse(init?.body || '{}')
+    return { ok: true, status: 200, json: async () => ({ ok: true, enabled: body.enabled === true, time: body.time || '08:30', nextRunAt: Date.now() + 3600000 }) }
+  }
   let m = u.match(/\/api\/v1\/(\w+)-resets\/recent/)
   if (m) {
     if (m[1] === 'antigravity') return { ok: false, status: 500, json: async () => ({}) }
@@ -159,6 +165,46 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   await sleep(60)
   const treeP = await render()
   check('P1 测试推送成功反馈', stringify(treeP).includes('测试推送成功'))
+
+  // digest: own save unit (switch + time), independent of the webhook form
+  const digSwitch = [...walk(treeP)].find((n) => n.type === 'input' && n.props.id === 'aihot-digest-on')
+  check('P8 日报区块: 开关 + 时间', !!digSwitch && html.includes('每日 AI 日报') && html.includes('下次推送'))
+  check('P9 时间是输入框（非原生 time 控件）',
+    !!findById(treeP, 'aihot-digest-time') && ![...walk(treeP)].some((n) => n.type === 'input' && n.props.type === 'time'))
+  check('P9 下次推送只到分',
+    /下次推送：\d{2}:\d{2}/.test(html) && !/下次推送：\d{2}:\d{2}:\d{2}/.test(html))
+  digSwitch.props.onChange({ target: { checked: true } })
+  let treeD = await render()
+  check('P9 默认值来自宿主', findById(treeD, 'aihot-digest-time').props.value === '08:30')
+
+  // focus opens the half-hour preset list
+  findById(treeD, 'aihot-digest-time').props.onFocus()
+  treeD = await render()
+  let items = [...walk(treeD)].filter((n) => n.type === 'button' && /aihot-digest-item/.test(n.props.className || ''))
+  check('P9 预设为半小时间隔', items.length === 48 && textOf(items[2]) === '01:00' && textOf(items[3]) === '01:30')
+  items[21].props.onClick()
+  treeD = await render()
+  check('P9 点选预设写回输入框', findById(treeD, 'aihot-digest-time').props.value === '10:30')
+
+  // typed input is allowed too, and is normalised on blur
+  findById(treeD, 'aihot-digest-time').props.onChange({ target: { value: '7:5' } })
+  treeD = await render()
+  findById(treeD, 'aihot-digest-time').props.onBlur()
+  treeD = await render()
+  check('P9 手输 7:5 归一为 07:05', findById(treeD, 'aihot-digest-time').props.value === '07:05')
+
+  findById(treeD, 'aihot-digest-time').props.onChange({ target: { value: '07:15' } })
+  treeD = await render()
+  check('P9 区块标题为「推送配置」', stringify(treeD).includes('推送配置'))
+  findButton(treeD, '保存日报设置').props.onClick()
+  await sleep(60)
+  treeD = await render()
+  check('P8 日报保存: 回显生效时间', stringify(treeD).includes('日报已改为每天 07:15 推送'))
+
+  findById(treeD, 'aihot-digest-time').props.onChange({ target: { value: '99:99' } })
+  treeD = await render()
+  check('P9 非法时间禁止保存并给出格式提示',
+    findButton(treeD, '保存日报设置').props.disabled === true && stringify(treeD).includes('时间格式需为 HH:MM'))
 
   // switch to daily tab
   const dailyBtn = findButton(tree, '今日日报')
@@ -218,6 +264,20 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   await sleep(120)
   tree = await render()
   check('P7 关闭后回到未配置态', !!findButton(tree, '仅保存') && stringify(tree).includes('已关闭推送'))
+  dispose()
+}
+
+// ---- host still on the old bridge (no digestCfg): name the cause, not "未知接口" ----
+{
+  hostConfigured = true
+  hostDigestCfg = false
+  const { render, dispose } = await loadPanel('zh')
+  const tree = await render()
+  const html = stringify(tree)
+  check('P10 旧宿主: 直接提示重启 DSH', html.includes('每日 AI 日报') && html.includes('重启 DSH'))
+  check('P10 旧宿主: 不渲染点了会失败的控件',
+    ![...walk(tree)].some((n) => n.props && n.props.id === 'aihot-digest-on') && !findButton(tree, '保存日报设置'))
+  hostDigestCfg = true
   dispose()
 }
 

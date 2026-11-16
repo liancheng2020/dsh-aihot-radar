@@ -42,6 +42,13 @@ window.__ModuleLoader__.load({
     // Keep in sync with the ADAPTERS keys in lib/notify.js. 'none' is not a
     // choice here — turning push off is a separate action, not a channel.
     const CHANNELS = ['wecom', 'dingtalk', 'feishu', 'bark', 'serverchan', 'telegram', 'generic']
+    // Half-hour presets for the digest time field. The field also takes typed
+    // input, so an odd time (08:47) is still possible — the list is a shortcut,
+    // not a constraint, which is why a themed combobox beats a <select>.
+    const DIGEST_PRESETS = Array.from({ length: 48 }, (_, i) => {
+      const m = i * 30
+      return `${String(Math.floor(m / 60)).padStart(2, '0')}:${m % 60 ? '30' : '00'}`
+    })
     const URL_HINT = {
       wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…',
       dingtalk: 'https://oapi.dingtalk.com/robot/send?access_token=…',
@@ -100,7 +107,7 @@ window.__ModuleLoader__.load({
         'tool.latest': '最近 AI 重点资讯', 'tool.search': '关键词搜索资讯', 'tool.hot': '当前 AI 热榜',
         'tool.daily': 'AIHOT 日报', 'tool.report': '周报 / 月报', 'tool.story': '热点事件时间线', 'tool.resets': '额度重置记录',
         'tools.copied': '已复制示例问句 · 去对话粘贴即可调用', 'tools.copiedTitle': '已复制示例问句，', 'tools.copiedBody': '去对话粘贴即可调用', 'tools.copiedShort': '已复制 ✓', 'tools.copyFail': '复制失败，请手动复制：',
-        'sec.push': '推送通道', 'push.channel': '推送通道：{c}', 'push.on': '已配置', 'push.off': '未配置',
+        'sec.push': '推送配置', 'push.channel': '推送通道：{c}', 'push.on': '已配置', 'push.off': '未配置',
         'chan.none': '未配置', 'chan.wecom': '企业微信', 'chan.dingtalk': '钉钉', 'chan.feishu': '飞书',
         'chan.bark': 'Bark', 'chan.serverchan': 'Server酱', 'chan.telegram': 'Telegram', 'chan.generic': '通用 Webhook',
         'push.hint': '预告/到账与 AI 日报将推送到这里，保存即生效，无需重启。',
@@ -122,6 +129,15 @@ window.__ModuleLoader__.load({
         'push.test': '发送测试推送', 'push.testing': '发送中…',
         'push.testOk': '测试推送成功：{c} 通道正常，发出 {n} 条。', 'push.testFail': '测试推送失败：{e}',
         'push.bridge': '面板拿不到宿主状态，所以这里配不了。具体原因见下一行；也可以复制下面的配置手填到 state.json 的 webhook 字段，保存后重启 DSH。',
+        'push.digest.title': '每日 AI 日报',
+        'push.digest.desc': '到点把当天 AI 日报推到上面的通道，同时在本地归档一份 Markdown。',
+        'push.digest.on': '启用定时推送', 'push.digest.time': '推送时间（北京时间）',
+        'push.digest.save': '保存日报设置', 'push.digest.saving': '保存中…',
+        'push.digest.saved': '日报已改为每天 {t} 推送。', 'push.digest.next': '下次推送：{t}',
+        'push.digest.needPush': '还没配置推送通道：日报只会归档到本地，不会推出去。',
+        'push.digest.off': '已关闭定时推送，日报只做本地归档。',
+        'push.digest.stale': '宿主还在跑旧版桥接（/status 里没有 digest 字段），这里改不了。重启 DSH 后再设置。',
+        'push.digest.badTime': '时间格式需为 HH:MM（24 小时制，可点开下拉选半小时整点）。',
         'foot.feedback': '反馈/报障',
       },
       en: {
@@ -150,7 +166,7 @@ window.__ModuleLoader__.load({
         'tool.latest': 'Latest AI highlights', 'tool.search': 'Keyword news search', 'tool.hot': 'Current AI trending',
         'tool.daily': 'AIHOT daily', 'tool.report': 'Weekly / monthly', 'tool.story': 'Event timeline', 'tool.resets': 'Quota-reset records',
         'tools.copied': 'Sample question copied · paste it in chat to invoke', 'tools.copiedTitle': 'Sample question copied, ', 'tools.copiedBody': 'paste it in chat to invoke', 'tools.copiedShort': 'Copied ✓', 'tools.copyFail': 'Copy failed, copy manually: ',
-        'sec.push': 'Push channel', 'push.channel': 'Push channel: {c}', 'push.on': 'Configured', 'push.off': 'Not set',
+        'sec.push': 'Push settings', 'push.channel': 'Push channel: {c}', 'push.on': 'Configured', 'push.off': 'Not set',
         'chan.none': 'Not set', 'chan.wecom': 'WeCom', 'chan.dingtalk': 'DingTalk', 'chan.feishu': 'Feishu',
         'chan.bark': 'Bark', 'chan.serverchan': 'ServerChan', 'chan.telegram': 'Telegram', 'chan.generic': 'Generic webhook',
         'push.hint': 'Reset announcements / confirmations and the AI digest push here. Saving applies immediately.',
@@ -172,6 +188,15 @@ window.__ModuleLoader__.load({
         'push.test': 'Send test push', 'push.testing': 'Sending…',
         'push.testOk': 'Test push via {c} succeeded, {n} message(s) sent.', 'push.testFail': 'Test push failed: {e}',
         'push.bridge': 'The panel cannot read host state, so it cannot save here. See the cause on the next line; you can also copy the config below into the webhook field of state.json and restart DSH.',
+        'push.digest.title': 'Daily AI digest',
+        'push.digest.desc': 'Sends the day\'s AI digest to the channel above at the set time, and archives a Markdown copy locally.',
+        'push.digest.on': 'Scheduled push', 'push.digest.time': 'Send time (Beijing)',
+        'push.digest.save': 'Save digest settings', 'push.digest.saving': 'Saving…',
+        'push.digest.saved': 'Digest now goes out daily at {t}.', 'push.digest.next': 'Next run: {t}',
+        'push.digest.needPush': 'No push channel yet: the digest is only archived locally.',
+        'push.digest.off': 'Scheduled push off; the digest is archived locally only.',
+        'push.digest.stale': 'The host is still running an older bridge (no digest field in /status), so this cannot be changed here. Restart DSH first.',
+        'push.digest.badTime': 'Time must be HH:MM (24-hour); open the list to pick a half-hour slot.',
         'foot.feedback': 'Feedback',
       },
     }
@@ -468,6 +493,25 @@ window.__ModuleLoader__.load({
     const monitorColor = (m) => m === 'healthy' ? T.success : m === 'delayed' ? T.warn : T.dimmed
     const monitorTitle = (m) => t(m === 'healthy' ? 'monitor.healthy' : m === 'delayed' ? 'monitor.delayed' : 'monitor.unknown')
     const fmtTime = (iso) => { if (!iso) return ''; try { return new Date(iso).toLocaleTimeString(LANG === 'en' ? 'en-US' : 'zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) } catch { return String(iso) } }
+    // "8:5" / "08:05" / " 8:05 " → "08:05"; anything out of range → ''. The host
+    // requires a zero-padded HH:MM, so tolerate what people actually type.
+    const normHm = (raw) => {
+      const m = /^(\d{1,2}):(\d{1,2})$/.exec(String(raw == null ? '' : raw).trim())
+      if (!m) return ''
+      const h = Number(m[1]), mm = Number(m[2])
+      if (h > 23 || mm > 59) return ''
+      return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+    }
+    // Minute precision only: "下次推送 08:30" reads better than 08:30:00.
+    const fmtHm = (ms) => {
+      if (!Number.isFinite(ms)) return ''
+      try {
+        const g = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]))
+        return `${g.hour === '24' ? '00' : g.hour}:${g.minute}`
+      } catch { return '' }
+    }
 
     function ProviderChip({ provider, resp }) {
       const err = resp?._error
@@ -532,6 +576,10 @@ window.__ModuleLoader__.load({
       const [offConfirm, setOffConfirm] = useState(false)
       const [bridgeErr, setBridgeErr] = useState('')
       const [bridgeDiag, setBridgeDiag] = useState('')
+      const [digOn, setDigOn] = useState(true)
+      const [digTime, setDigTime] = useState('08:30')
+      const [digNext, setDigNext] = useState(null)  // ms, from the host timer
+      const [digOpen, setDigOpen] = useState(false) // half-hour preset list visible
 
       useEffect(() => {
         if (!toast) return
@@ -606,6 +654,13 @@ window.__ModuleLoader__.load({
             const j = await res.json()
             if (cancelled) return
             setBridgeErr(''); setBridgeDiag(''); setHost(j); if (!j.configured) setEditing(true)
+            // Effective digest settings (panel preference > config default), so
+            // the switch reflects what the host will actually do.
+            if (j.digestCfg) {
+              setDigOn(!!j.digestCfg.enabled)
+              setDigTime(j.digestCfg.time || '08:30')
+              setDigNext(Number(j.digestCfg.nextRunAt) || null)
+            }
           } catch (e) {
             if (cancelled) return
             if (attempt < 2) { attempt++; timer = setTimeout(load, attempt * 500); return }
@@ -654,6 +709,22 @@ window.__ModuleLoader__.load({
           setForm({ channel: j.channel, url: '', secret: '' })
           if (thenTest) { setBusy(''); return testPush() }
           setResult({ ok: true, message: t('push.saved') })
+        } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
+        setBusy('')
+      }
+
+      // Digest preference lives in state.json too, so saving applies at once and
+      // the host reschedules its timer without a restart.
+      const saveDigest = async () => {
+        setBusy('digest'); setResult(null)
+        try {
+          const j = await post('/digest', { enabled: digOn, time: normHm(digTime) })
+          // Old host builds have no /digest route: say "restart DSH" instead of
+          // echoing the bridge's bare "未知接口".
+          if (!j.ok) { setResult({ ok: false, message: j.code === 'not-found' ? t('push.digest.stale') : (j.message || '') }); return }
+          setDigOn(!!j.enabled); setDigTime(j.time); setDigNext(Number(j.nextRunAt) || null)
+          setHost((prev) => (prev ? { ...prev, digestCfg: { ...(prev.digestCfg || {}), enabled: j.enabled, time: j.time, nextRunAt: j.nextRunAt || null } } : prev))
+          setResult({ ok: true, message: j.enabled ? t('push.digest.saved', { t: j.time }) : t('push.digest.off') })
         } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
         setBusy('')
       }
@@ -785,6 +856,67 @@ window.__ModuleLoader__.load({
           }, busy === 'test' ? t('push.testing') : t('push.test')),
           h('button', { type: 'button', style: css.btn, disabled: !!busy, onClick: openForm }, host.configured ? t('push.edit') : t('push.save'))))
 
+      const digHm = normHm(digTime) // '' while the typed text is not a valid time
+      const digestDirty = () => {
+        const d = host?.digestCfg || {}
+        return digOn !== !!d.enabled || digHm !== (d.time || '08:30')
+      }
+
+      // Themed combobox: type any HH:MM, or pick one of the half-hour presets.
+      // A <select> cannot take typed input, and input[type=time] opens an OS
+      // dialog that ignores the theme (white/blue, as reported).
+      const timePicker = () => h('div', { style: { position: 'relative', flex: 'none' } },
+        h('input', {
+          id: 'aihot-digest-time', value: digTime, placeholder: 'HH:MM', maxLength: 5,
+          disabled: !digOn, spellCheck: false, autoComplete: 'off',
+          style: { ...css.input, width: 88, opacity: digOn ? 1 : 0.5, borderColor: digHm ? T.border : T.error, cursor: digOn ? 'text' : 'not-allowed' },
+          'aria-label': t('push.digest.time'), 'aria-invalid': digHm ? 'false' : 'true',
+          onChange: (e) => { setDigTime(e.target.value); setDigOpen(true) },
+          // Normalise on blur so "8:5" becomes "08:05"; the host needs HH:MM.
+          onBlur: () => { setDigOpen(false); const n = normHm(digTime); if (n) setDigTime(n) },
+          onFocus: () => setDigOpen(true),
+          onKeyDown: (e) => { if (e.key === 'Escape' || e.key === 'Enter') setDigOpen(false) },
+        }),
+        digOn && digOpen ? h('div', {
+          role: 'listbox', className: 'aihot-digest-menu',
+          style: { position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30, width: 88, maxHeight: 172, overflowY: 'auto', padding: 4, borderRadius: 8, border: `1px solid ${T.border}`, background: T.layer1, boxShadow: '0 10px 24px rgba(0,0,0,0.35)' },
+        }, DIGEST_PRESETS.map((v) => h('button', {
+          type: 'button', key: v, role: 'option', 'aria-selected': v === digHm ? 'true' : 'false',
+          className: 'aihot-digest-item' + (v === digHm ? ' aihot-digest-item-on' : ''),
+          style: { display: 'block', width: '100%', textAlign: 'left', padding: '5px 8px', border: 0, borderRadius: 6, background: 'transparent', color: v === digHm ? T.brand : T.sub, font: 'inherit', fontSize: 12, fontWeight: v === digHm ? 600 : 400, cursor: 'pointer' },
+          // Keep focus in the input, otherwise blur closes the list before the
+          // click lands and preset picks never fire.
+          onMouseDown: (e) => e.preventDefault(),
+          onClick: () => { setDigTime(v); setDigOpen(false) },
+        }, v))) : null)
+
+      // The digest is saved on its own: changing the send time must not require
+      // re-entering the webhook (and re-saving a webhook must not reset it).
+      const digestCard = () => h('div', { style: { ...css.card, marginTop: 10 } },
+        h('div', { style: css.row },
+          h('span', { style: css.cardTitle }, t('push.digest.title')),
+          digNext ? h('span', { style: css.metaDim }, t('push.digest.next', { t: fmtHm(digNext) })) : null),
+        h('div', { style: css.metaDim }, t('push.digest.desc')),
+        // No digestCfg in /status = the host is still running an older bridge.
+        // Say so up front rather than letting the save fail with "未知接口".
+        host.digestCfg ? null : h('div', { style: { ...css.metaDim, color: T.warn, marginTop: 6 } }, t('push.digest.stale')),
+        host.configured ? null : h('div', { style: { ...css.metaDim, color: T.warn, marginTop: 4 } }, t('push.digest.needPush')),
+        host.digestCfg ? [
+          h('div', { key: 'row', style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' } },
+            h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.sub, cursor: 'pointer' } },
+              // accentColor makes the tick use the theme brand instead of the
+              // browser's default blue.
+              h('input', { id: 'aihot-digest-on', type: 'checkbox', style: { accentColor: T.brand, margin: 0, cursor: 'pointer' }, checked: digOn, onChange: (e) => setDigOn(e.target.checked) }),
+              t('push.digest.on')),
+            timePicker(),
+            h('button', {
+              type: 'button', disabled: !!busy || !digHm || !digestDirty(),
+              style: (busy || !digHm || !digestDirty()) ? { ...css.btn, opacity: 0.5, cursor: 'not-allowed' } : css.btn,
+              onClick: saveDigest,
+            }, busy === 'digest' ? t('push.digest.saving') : t('push.digest.save'))),
+          digHm ? null : h('div', { key: 'bad', style: { ...css.metaDim, color: T.error, marginTop: 6 } }, t('push.digest.badTime')),
+        ] : null)
+
       return h('div', null,
         failed.length ? h('div', { style: css.error }, t('err.partial', { p: failed.join('、') })) : null,
         // The push block sits below the fold; surface it here so a first run
@@ -819,6 +951,7 @@ window.__ModuleLoader__.load({
               h('button', { type: 'button', style: css.btn, onClick: copyDiag }, t('push.copyDiag'))))
             : h('div', null,
               editing ? pushForm() : pushSummary(),
+              digestCard(),
               result ? h('div', { style: { marginTop: 8 } },
                 h('div', { style: { color: result.ok ? T.success : T.error, fontSize: 12 } }, result.message),
                 result.hint ? h('div', { style: { ...css.metaDim, marginTop: 4 } }, result.hint) : null) : null)),
@@ -860,6 +993,9 @@ window.__ModuleLoader__.load({
           .aihot-tab:hover { color: ${T.sub}; background: ${T.hover}; }
           .aihot-tool:active { transform: scale(0.98); }
           .aihot-tool-copied { border-color: ${T.success}; background: ${T.layer2}; }
+          .aihot-digest-item:hover { background: ${T.hover}; color: ${T.text}; }
+          .aihot-digest-menu::-webkit-scrollbar { width: 8px; }
+          .aihot-digest-menu::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 8px; }
           .aihot-toast { position: fixed; z-index: 999; pointer-events: none; display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; max-width: 80vw; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; transform: translateX(-50%); animation: aihot-toast-in .2s ease; }
           /* Alpha tints + theme label tokens, so both light and dark themes stay readable. */
           .aihot-toast-ok { background: rgba(52,199,89,0.16); border: 1px solid rgba(52,199,89,0.65); color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }

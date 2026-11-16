@@ -127,13 +127,20 @@ export function apply(ctx, config) {
     api: syncApi, state, notifier, config, onScan,
   }))
 
-  ctx.effect(() => startDigest({
-    api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onDigest, logger: log,
-  }))
+  // Held so the bridge can reschedule after the panel saves a new digest time.
+  let digestCtl = null
+  ctx.effect(() => {
+    digestCtl = startDigest({
+      api: syncApi, state, notifier, config, save: (s) => saveState(s, log), onDigest, logger: log,
+    })
+    return () => digestCtl?.stop?.()
+  })
 
-  // Loopback bridge for the sidebar panel (status + save webhook + test push). Optional.
+  // Loopback bridge for the sidebar panel (status + save webhook/digest + test push). Optional.
   if (config.localApi?.enabled !== false) {
-    ctx.effect(() => startLocalApi({ state, notifier, config, logger: log, save: (s) => saveState(s, log) }))
+    ctx.effect(() => startLocalApi({
+      state, notifier, config, logger: log, save: (s) => saveState(s, log), digestCtl: () => digestCtl,
+    }))
   }
 
   log?.info?.('aihot-radar activated: tools + quota radar + daily digest')
