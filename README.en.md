@@ -24,9 +24,9 @@ A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset 
 
 ## What it does
 
-- **Quota radar (the hook)**: polls AIHOT reset monitors in the background and pushes to your webhook on new **announcements** or **confirmed** resets. Reset-card announcements include a predicted time window; confirmations include the source post. AIHOT-inferred states (window passed / likely completed) send a light notice marked "unconfirmed". A per-cycle push cap defers overflow to the next cycle, so no event is lost.
+- **Quota radar (the hook)**: polls AIHOT reset monitors in the background and pushes to your webhook on new **announcements** or **confirmed** resets. Reset-card announcements include a predicted time window; confirmations include the source post. AIHOT-inferred states (window passed / likely completed) send a light notice marked "unconfirmed". A per-cycle push cap defers overflow to the next cycle, so no event is lost; definite failures retry next cycle (up to 5 attempts), while timeouts and dropped connections are recorded as **delivery uncertain** and never re-sent — one missed message beats a duplicate in a shared group.
 - **7 news tools**: ask "what happened in AI today", "search OpenAI", "did Claude quota reset?" — the agent calls `aihot_*` tools and answers from AIHOT's curated Chinese Markdown.
-- **Daily digest** (optional): fetches the AIHOT daily report from the **JSON API** at `digest.timezone` (Beijing by default), pushes and archives it locally; the panel can toggle it and change the time. Oversized payloads are split into multiple messages; failed pushes retry after 10 minutes, up to 3 times per day.
+- **Daily digest** (optional): fetches the AIHOT daily report from the **JSON API** at `digest.timezone` (Beijing by default), pushes and archives it locally; the panel can toggle it and change the time. Oversized payloads are split into multiple messages; failed pushes retry after 10 minutes, up to 3 times per day (a timeout does not use up a retry, and an edition that became delivery-uncertain is never re-sent).
 - **Panel**: live view of pending announcements, recent events, and the tool catalog, plus the push channel and daily-digest settings; also shows AIHOT's check time and monitor status (client-side fetch).
 
 ## Install
@@ -62,7 +62,7 @@ Below it sits the **Daily AI digest**: a switch plus a send time (half-hour pres
 { "webhook": { "channel": "wecom", "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx", "secret": "" } }
 ```
 
-> Only touch the `webhook` field; `seen`, `digest` and `digestPref` are maintained by the plugin — replacing the whole file loses dedup and digest progress.
+> Only touch the `webhook` field; `seen`, `digest`, `digestPref` and `delivery` are maintained by the plugin — replacing the whole file loses dedup and digest progress.
 
 **Channels**: `wecom` (bot URL) · `dingtalk` (URL + optional signing key) · `feishu` (URL) · `bark` (`https://api.day.app/<key>`) · `serverchan` (`https://sctapi.ftqq.com/<key>.send`) · `telegram` (url = bot token, secret = chat_id) · `generic` (any JSON POST) · `none` (default, off).
 
@@ -89,7 +89,8 @@ Below it sits the **Daily AI digest**: a switch plus a send time (half-hour pres
 ```
 
 - `radar.notifyAnnounced` / `radar.notifyConfirmed` control announcement and confirmation pushes (both on by default). Quiet hours defer pushes instead of dropping them; muted sources are marked seen so unmuting won't replay old events; the digest edition follows AIHOT's `report.date`.
-- WeCom is split at ≤3900 bytes and Telegram at ≤3800 characters (line-aware, no UTF-8 splitting), and the response body's business code is validated — HTTP 200 with a business failure still counts as a failure.
+- WeCom is split at ≤3900 bytes and Telegram at ≤3800 characters (line-aware, no UTF-8 splitting), and the response body's business code is validated — HTTP 200 with a business failure still counts as a failure. An HTML page, an empty body from a known platform, or a missing success field never counts as delivered.
+- **No duplicate pushes across instances**: when desktop and web share `DSH_HOME`, a state lock serialises read → dedupe → send → write, so each event and each digest edition goes out once. Failures and uncertain deliveries are kept in `state.json` under `delivery` and surfaced by `/status` and `aihot_radar_status`.
 - `notify.signature` appends a one-line attribution to reset cards, the digest and test pushes (the built-in wording is Chinese). Set `signatureText` to use your own, e.g. `via dsh-aihot-radar · install: github:liancheng2020/dsh-aihot-radar`, or `false` to drop the line.
 - A loopback-only bridge at `127.0.0.1:17420` powers the panel's save and test buttons — it returns only the host, never the url/secret, and rejects any non-local origin (the host shell's `dsh-app://` is allowed). Falls back to the `aihot_radar_status` tool with a classified failure reason; `localApi.enabled: false` disables it.
 - The digest switch follows an **explicit preference** (panel) or `digest.enabled` (config): a configured webhook never turns the digest on by itself, so upgrading does not add a daily message. The panel shows the last run (delivered date / failure reason) and the next run in `digest.timezone`, to the minute. If the host starts after that time, today's digest is skipped by default; `digest.catchUp: true` pushes it shortly after startup (same-day de-duplication still applies).

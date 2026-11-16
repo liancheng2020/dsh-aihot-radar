@@ -24,9 +24,9 @@ DSH 插件：**Codex / Claude / Antigravity 额度重置实时推送** + **AI �
 
 ## 它做什么
 
-- **额度雷达（核心）**：后台轮询 AIHOT 的重置监控，出现新的**预告**或**到账**时推送到你的 webhook。重置卡预告带时间窗推算，到账带确认帖；AIHOT 推断态（窗口已过/可能已到账）发轻提示并标明「未经确认」。单轮推送有上限，超出的事件下一轮补推，不会丢。
+- **额度雷达（核心）**：后台轮询 AIHOT 的重置监控，出现新的**预告**或**到账**时推送到你的 webhook。重置卡预告带时间窗推算，到账带确认帖；AIHOT 推断态（窗口已过/可能已到账）发轻提示并标明「未经确认」。单轮推送有上限，超出的事件下一轮补推，不会丢；明确失败下一轮重试（最多 5 次），超时或连接中断只记「送达不确定」、不自动重发——宁可漏一条，也不让群里收到两条。
 - **7 个资讯工具**：对话里直接问"今天 AI 圈发生了什么""搜一下 OpenAI""Claude 额度重置了吗"，Agent 调用 `aihot_*` 工具拿 AIHOT 整理好的中文 Markdown 回答。
-- **AI 日报**：可选，按 `digest.timezone`（默认北京时间）定时从 AIHOT **JSON 接口**拉日报，推送并归档到本地；面板里可开关、改时间。超长自动分条发送；推送失败 10 分钟后重试，当天最多 3 次。
+- **AI 日报**：可选，按 `digest.timezone`（默认北京时间）定时从 AIHOT **JSON 接口**拉日报，推送并归档到本地；面板里可开关、改时间。超长自动分条发送；推送失败 10 分钟后重试，当天最多 3 次（超时不占次数；同一期一旦「送达不确定」就不再重发）。
 - **面板**：实时看待生效预告、最近事件、工具清单，并可直接配置推送通道与每日日报；同时显示 AIHOT 核对时间与监控状态（纯前端取数）。
 
 ## 安装
@@ -62,7 +62,7 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
 { "webhook": { "channel": "wecom", "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx", "secret": "" } }
 ```
 
-> 只动 `webhook` 一个字段；`seen`、`digest`、`digestPref` 由插件维护，整文件覆盖会丢失去重与日报进度。
+> 只动 `webhook` 一个字段；`seen`、`digest`、`digestPref`、`delivery` 由插件维护，整文件覆盖会丢失去重与日报进度。
 
 **通道**：`wecom`（企微机器人 URL）· `dingtalk`（URL + 可选加签密钥）· `feishu`（URL）· `bark`（`https://api.day.app/<key>`）· `serverchan`（`https://sctapi.ftqq.com/<key>.send`）· `telegram`（url 填 Bot Token，secret 填 chat_id）· `generic`（任意 JSON POST）· `none`（默认，不推送）。
 
@@ -89,7 +89,8 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
 ```
 
 - `radar.notifyAnnounced` / `radar.notifyConfirmed` 控制预告与到账推送（默认都开）；免打扰期间推送顺延不丢，静音来源解锁后不补刷旧事件；日报期号以 AIHOT 返回的 `report.date` 为准。
-- 企微 ≤3900 字节、Telegram ≤3800 字符自动分条（按行切、不截断中文），并校验响应体业务码——HTTP 200 但业务失败同样判失败。
+- 企微 ≤3900 字节、Telegram ≤3800 字符自动分条（按行切、不截断中文），并校验响应体业务码——HTTP 200 但业务失败同样判失败。HTML 页面、已知平台的空正文、缺少成功字段都不算推送成功。
+- **多实例不重复推送**：桌面与 Web 共用 `DSH_HOME` 时，状态锁把「读状态 → 判重 → 发送 → 写状态」整条串行化，同一事件、同一期日报只发一次；失败与「送达不确定」记进 `state.json` 的 `delivery`，`/status` 与 `aihot_radar_status` 都会透出。
 - `notify.signature` 默认在额度卡片、日报与测试推送尾部加 `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar`；`false` 关闭，或用 `signatureText` 换成自己的文案。
 - 本地桥接仅绑定 `127.0.0.1:17420`，只回 host、不暴露 url/secret；非本机来源一律拒绝（宿主壳 `dsh-app://` 放行）。桥接不可用时回落 `aihot_radar_status` 并给出分类原因；`localApi.enabled: false` 可关闭。
 - 日报开关以**显式偏好**（面板）或 `digest.enabled` 为准：配了 webhook 不会自动开启日报，升级不会凭空多出每日消息。面板显示「上次推送（成功日期 / 失败原因）」与「下次推送」（按 `digest.timezone`，精确到分）；宿主在设定时间之后才启动时默认不补发，`digest.catchUp: true` 可补一次（同日去重仍生效）。
