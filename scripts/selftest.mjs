@@ -150,6 +150,13 @@ await atest('A2 feishu sends a card; telegram flattened; wecom keeps markdown', 
 
   assert.ok(!telegram.body.text.includes('###') && telegram.body.text.includes('AIHOT https://aihot.news'), 'telegram is plain')
   assert.ok(wecom.body.markdown.content.includes('**标题**'), 'wecom keeps markdown')
+
+  const flatSig = toPlainText(`正文\n\n${DEFAULT_SIGNATURE}`)
+  assert.ok(flatSig.includes('安装：github:liancheng2020/dsh-aihot-radar'), 'plain-text signature keeps the install spec')
+  assert.ok(!flatSig.includes('https://github.com/liancheng2020/dsh-aihot-radar'),
+    'plain-text signature drops the URL so it stays one clean line')
+  assert.ok(toPlainText('数据来源：[AIHOT](https://aihot.news)').includes('AIHOT https://aihot.news'),
+    'body links keep their target in plain text')
 })
 
 test('A2 card colour follows the event state', () => {
