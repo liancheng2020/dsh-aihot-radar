@@ -13,6 +13,8 @@ window.__ModuleLoader__.load({
     const BASE = 'https://aihot.news'
     const LOCAL_API = 'http://127.0.0.1:17420'
     const REPO = 'https://github.com/liancheng2020/dsh-aihot-radar'
+    // Sibling plugin by the same author, recommended in the footer.
+    const SIBLING = 'https://github.com/liancheng2020/dsh-balance-sentinel'
     // Keep in sync with lib/api.js PROVIDERS.
     const PROVIDERS = [
       { id: 'codex', label: 'Codex' },
@@ -102,7 +104,7 @@ window.__ModuleLoader__.load({
         'daily.prev': '← 前一天', 'daily.next': '后一天 →', 'daily.latest': '回到最新', 'daily.web': '网页版',
         'daily.latestLabel': '最新一期', 'daily.atLatest': '已是最新日报', 'daily.nextTitle': '查看后一天',
         'daily.failed': '日报读取失败：{e}', 'daily.loading': '日报加载中…',
-        'foot.source': '数据来源', 'foot.push': '后台雷达自动推送 · webhook 见 state.json',
+        'foot.source': '数据来源',
         'err.partial': '部分来源读取失败：{p} · 其余数据仍可用',
         'tool.latest': '最近 AI 重点资讯', 'tool.search': '关键词搜索资讯', 'tool.hot': '当前 AI 热榜',
         'tool.daily': 'AIHOT 日报', 'tool.report': '周报 / 月报', 'tool.story': '热点事件时间线', 'tool.resets': '额度重置记录',
@@ -145,6 +147,7 @@ window.__ModuleLoader__.load({
         'push.digest.test': '发送测试日报', 'push.digest.testing': '发送中…',
         'push.digest.testOk': '测试日报已发出：{d} · {n} 条。',
         'foot.feedback': '反馈/报障',
+        'foot.sibling': '同作者：余额哨兵',
       },
       en: {
         'meta.title': 'AIHOT Radar',
@@ -167,7 +170,7 @@ window.__ModuleLoader__.load({
         'daily.prev': '← Prev day', 'daily.next': 'Next day →', 'daily.latest': 'Back to latest', 'daily.web': 'Web version',
         'daily.latestLabel': 'Latest edition', 'daily.atLatest': 'Already the latest', 'daily.nextTitle': 'View next day',
         'daily.failed': 'Failed to load daily: {e}', 'daily.loading': 'Loading daily…',
-        'foot.source': 'Data source', 'foot.push': 'Background radar auto-push · webhook in state.json',
+        'foot.source': 'Data source',
         'err.partial': 'Some sources failed: {p} · other data still available',
         'tool.latest': 'Latest AI highlights', 'tool.search': 'Keyword news search', 'tool.hot': 'Current AI trending',
         'tool.daily': 'AIHOT daily', 'tool.report': 'Weekly / monthly', 'tool.story': 'Event timeline', 'tool.resets': 'Quota-reset records',
@@ -210,6 +213,7 @@ window.__ModuleLoader__.load({
         'push.digest.test': 'Send test digest', 'push.digest.testing': 'Sending…',
         'push.digest.testOk': 'Test digest sent: {d} · {n} chunk(s).',
         'foot.feedback': 'Feedback',
+        'foot.sibling': 'Same author: Balance Sentinel',
       },
     }
 
@@ -307,7 +311,7 @@ window.__ModuleLoader__.load({
       toolDesc: { fontSize: 11.5, color: T.tertiary, marginLeft: 'auto' },
       empty: { color: T.dimmed, fontSize: 12.5, fontStyle: 'italic', padding: '14px 16px', background: T.layer1, border: `1px dashed ${T.border}`, borderRadius: 10 },
       error: { color: T.error, fontSize: 12.5, padding: '12px 14px', background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.3)', borderRadius: 10, marginBottom: 16 },
-      foot: { marginTop: 8, paddingTop: 14, borderTop: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: T.sub, display: 'flex', alignItems: 'center', gap: 6 },
+      foot: { marginTop: 8, paddingTop: 14, borderTop: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: T.sub, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', rowGap: 6 },
       dtoolbar: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
       dnav: { fontSize: 12, padding: '5px 12px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.layer1, color: T.sub, cursor: 'pointer', transition: 'all .15s ease' },
       ddate: { fontSize: 13, fontWeight: 650, color: T.text, padding: '0 6px' },
@@ -1178,7 +1182,7 @@ window.__ModuleLoader__.load({
         h('div', { style: css.foot },
           t('foot.source'), h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: BASE, target: '_blank', rel: 'noreferrer' }, 'AIHOT', h('span', null, '↗')),
           h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: REPO + '/issues', target: '_blank', rel: 'noreferrer' }, t('foot.feedback'), h('span', null, '↗')),
-          h('span', { style: { marginLeft: 'auto' } }, t('foot.push'))))
+          h('a', { style: { ...css.link, marginTop: 0, marginLeft: 'auto' }, className: 'aihot-link', href: SIBLING, target: '_blank', rel: 'noreferrer' }, t('foot.sibling'), h('span', null, '↗'))))
     }
 
     return {

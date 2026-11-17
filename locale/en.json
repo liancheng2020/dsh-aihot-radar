@@ -51,7 +51,6 @@
   "daily.failed": "Failed to load daily: {e}",
   "daily.loading": "Loading daily…",
   "foot.source": "Data source",
-  "foot.push": "Background radar auto-push · webhook in state.json",
   "err.partial": "Some sources failed: {p} · other data still available",
   "tool.latest": "Latest AI highlights",
   "tool.search": "Keyword news search",
@@ -127,5 +126,6 @@
   "push.digest.test": "Send test digest",
   "push.digest.testing": "Sending…",
   "push.digest.testOk": "Test digest sent: {d} · {n} chunk(s).",
-  "foot.feedback": "Feedback"
+  "foot.feedback": "Feedback",
+  "foot.sibling": "Same author: Balance Sentinel"
 }

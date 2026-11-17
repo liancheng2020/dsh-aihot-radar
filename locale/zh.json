@@ -51,7 +51,6 @@
   "daily.failed": "日报读取失败：{e}",
   "daily.loading": "日报加载中…",
   "foot.source": "数据来源",
-  "foot.push": "后台雷达自动推送 · webhook 见 state.json",
   "err.partial": "部分来源读取失败：{p} · 其余数据仍可用",
   "tool.latest": "最近 AI 重点资讯",
   "tool.search": "关键词搜索资讯",
@@ -127,5 +126,6 @@
   "push.digest.test": "发送测试日报",
   "push.digest.testing": "发送中…",
   "push.digest.testOk": "测试日报已发出：{d} · {n} 条。",
-  "foot.feedback": "反馈/报障"
+  "foot.feedback": "反馈/报障",
+  "foot.sibling": "同作者：余额哨兵"
 }

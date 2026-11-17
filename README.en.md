@@ -129,3 +129,5 @@ Below it sits the **Daily AI digest**: a switch plus a send time (half-hour pres
 Can't install or pushes failing? Open an [issue](https://github.com/liancheng2020/dsh-aihot-radar/issues) with the DSH version / plugin version / platform (web or desktop) / the exact error.
 
 Local verification (repo clone required): `node scripts/selftest.mjs`, plus `scripts/selftest-client.mjs` and `scripts/verify-dedup.mjs`; pure node, zero dependencies, runs in Git Bash and PowerShell.
+
+Same author: [Balance Sentinel](https://github.com/liancheng2020/dsh-balance-sentinel) — DeepSeek balance monitoring with low-balance alerts to Feishu / DingTalk.

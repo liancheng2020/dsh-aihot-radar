@@ -129,3 +129,5 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
 装不上或推送不通，请带 DSH 版本 / 插件版本 / 系统（web 或桌面）/ 报错原文到 [Issues](https://github.com/liancheng2020/dsh-aihot-radar/issues) 反馈。
 
 本地验证（需克隆仓库）：`node scripts/selftest.mjs`，另含 `scripts/selftest-client.mjs` 与 `scripts/verify-dedup.mjs`；纯 node、零依赖，Git Bash / PowerShell 均可运行。
+
+同作者另一插件：[余额哨兵](https://github.com/liancheng2020/dsh-balance-sentinel)（DeepSeek 余额监控，低余额告警推送到飞书 / 钉钉）。
