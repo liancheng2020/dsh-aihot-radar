@@ -91,7 +91,7 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
 - `radar.notifyAnnounced` / `radar.notifyConfirmed` 控制预告与到账推送（默认都开）；免打扰期间推送顺延不丢，静音来源解锁后不补刷旧事件；日报期号以 AIHOT 返回的 `report.date` 为准。
 - 企微 ≤3900 字节、Telegram ≤3800 字符自动分条（按行切、不截断中文），并校验响应体业务码——HTTP 200 但业务失败同样判失败。HTML 页面、已知平台的空正文、缺少成功字段都不算推送成功。
 - **多实例不重复推送**：桌面与 Web 共用 `DSH_HOME` 时，状态锁把「读状态 → 判重 → 发送 → 写状态」整条串行化，同一事件、同一期日报只发一次；失败与「送达不确定」记进 `state.json` 的 `delivery`，`/status` 与 `aihot_radar_status` 都会透出。
-- `notify.signature` 默认在额度卡片、日报与测试推送尾部加 `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar`；`false` 关闭，或用 `signatureText` 换成自己的文案。
+- `notify.signature` 默认在额度卡片、日报与测试推送尾部加 `via AIHOT 雷达 · 安装：github:liancheng2020/dsh-aihot-radar`；这句在飞书卡片里是**可点击**的链接（其余通道为纯文本，只保留地址）。`false` 关闭，或用 `signatureText` 换成自己的文案。
 - 本地桥接仅绑定 `127.0.0.1:17420`，只回 host、不暴露 url/secret；非本机来源一律拒绝（宿主壳 `dsh-app://` 放行）。桥接不可用时回落 `aihot_radar_status` 并给出分类原因；`localApi.enabled: false` 可关闭。
 - 日报开关以**显式偏好**（面板）或 `digest.enabled` 为准：配了 webhook 不会自动开启日报，升级不会凭空多出每日消息。面板显示「上次推送（成功日期 / 失败原因）」与「下次推送」（按 `digest.timezone`，精确到分）；宿主在设定时间之后才启动时默认不补发，`digest.catchUp: true` 可补一次（同日去重仍生效）。
 - 不想推送：`radar.enabled: false`（资讯工具与面板仍可用）；卸载：从 profile 移除该插件行并重启 DSH。

@@ -143,6 +143,9 @@ await atest('A2 feishu sends a card; telegram flattened; wecom keeps markdown', 
   assert.ok(div.text.content.includes('[AIHOT](https://aihot.news)'), 'card keeps inline markdown links')
   const note = card.elements.find((e) => e.tag === 'note')
   assert.ok(note && note.elements[0].content.includes('via AIHOT'), 'signature moves to the note')
+  assert.equal(note.elements[0].tag, 'lark_md', 'signature note is lark_md so its install link stays tappable')
+  assert.ok(DEFAULT_SIGNATURE.includes('](https://github.com/liancheng2020/dsh-aihot-radar'),
+    'built-in signature wraps the install spec in a markdown link')
   assert.ok(!div.text.content.includes('via AIHOT'), 'signature left the body')
 
   assert.ok(!telegram.body.text.includes('###') && telegram.body.text.includes('AIHOT https://aihot.news'), 'telegram is plain')
