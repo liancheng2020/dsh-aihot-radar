@@ -89,14 +89,15 @@ window.__ModuleLoader__.load({
         'refresh': '刷新',
         'tab.radar': '额度雷达', 'tab.daily': '今日日报',
         'monitor.healthy': 'AIHOT 监控正常', 'monitor.delayed': 'AIHOT 数据延迟', 'monitor.unknown': 'AIHOT 监控状态未知',
-        'chip.pending': '{n} 待生效', 'chip.recent': '{n} 近期',
-        'chip.hasPending': '有重置预告', 'chip.noPending': '近 7 天无预告', 'chip.delayed': '数据延迟', 'chip.failed': '读取失败',
+        'chip.metaPending': '待生效预告', 'chip.metaRecent': '近 7 天已到账', 'chip.failedHint': '读取失败，点「刷新」重试',
+        'chip.noPending': '近 7 天无预告', 'chip.delayed': '数据延迟', 'chip.failed': '读取失败',
         'sec.pending': '待生效预告', 'sec.recent': '最近事件', 'sec.tools': '资讯工具',
         'empty.pending': '当前没有待生效的重置预告', 'empty.loading': '加载中…', 'empty.recent': '近 7 天无记录',
         'tools.hint': '点击卡片复制示例问句，去对话粘贴即可调用；也可直接提问，例如「今天 AI 圈发生了什么」',
         'status.checkedAt': 'AIHOT 核对于 {t}', 'status.refreshedAt': '面板刷新于 {t}', 'status.tz': '（北京时间）',
         'status.askAgent': '后台推送状态可向 Agent 提问（aihot_radar_status）',
-        'badge.announced': '预告', 'badge.confirmed': '已到账',
+        'badge.announced': '预告', 'badge.confirmed': '已到账', 'badge.inferred': '未经确认',
+        'inferred.expired': '窗口已过，AIHOT 未确认到账', 'inferred.likely': 'AIHOT 推断可能已到账，未经确认',
         'reset.default': '额度重置', 'outage': '服务故障公告：{t}', 'outage.recovered': '已恢复', 'estimate': '预计：{t}',
         'link.source': '查看原帖', 'link.sourceShort': '原帖',
         'countdown.prefix': '距预计窗口', 'countdown.open': '窗口已开启 · 待确认',
@@ -155,14 +156,15 @@ window.__ModuleLoader__.load({
         'refresh': 'Refresh',
         'tab.radar': 'Quota Radar', 'tab.daily': 'Daily Report',
         'monitor.healthy': 'AIHOT monitor healthy', 'monitor.delayed': 'AIHOT data delayed', 'monitor.unknown': 'AIHOT monitor status unknown',
-        'chip.pending': '{n} pending', 'chip.recent': '{n} recent',
-        'chip.hasPending': 'Reset pending', 'chip.noPending': 'No pending in 7 days', 'chip.delayed': 'Data delayed', 'chip.failed': 'Failed to load',
+        'chip.metaPending': 'pending announcement', 'chip.metaRecent': 'confirmed in 7 days', 'chip.failedHint': 'Failed to load — hit Refresh to retry',
+        'chip.noPending': 'No pending in 7 days', 'chip.delayed': 'Data delayed', 'chip.failed': 'Failed to load',
         'sec.pending': 'Pending announcements', 'sec.recent': 'Recent events', 'sec.tools': 'News tools',
         'empty.pending': 'No pending reset announcements', 'empty.loading': 'Loading…', 'empty.recent': 'No records in 7 days',
         'tools.hint': 'Click a card to copy a sample question, then paste it in chat; or just ask, e.g. "what happened in AI today"',
         'status.checkedAt': 'AIHOT checked at {t}', 'status.refreshedAt': 'Panel refreshed at {t}', 'status.tz': ' (Beijing time)',
         'status.askAgent': 'Ask the agent for push status (aihot_radar_status)',
-        'badge.announced': 'Announced', 'badge.confirmed': 'Confirmed',
+        'badge.announced': 'Announced', 'badge.confirmed': 'Confirmed', 'badge.inferred': 'Unconfirmed',
+        'inferred.expired': 'Window passed; AIHOT has no confirmation', 'inferred.likely': 'AIHOT infers it likely landed; unconfirmed',
         'reset.default': 'Quota reset', 'outage': 'Service outage: {t}', 'outage.recovered': 'recovered', 'estimate': 'Expected: {t}',
         'link.source': 'View source', 'link.sourceShort': 'Source',
         'countdown.prefix': 'Window opens in', 'countdown.open': 'Window open · unconfirmed',
@@ -253,11 +255,21 @@ window.__ModuleLoader__.load({
       error: 'var(--dsw-alias-state-error-primary, #ff4d4f)',
     }
 
+    // Theme-following tints. color-mix() resolves against the host's
+    // --dsw-alias-* tokens, so one declaration is correct in both the light and
+    // the dark skin; the rgba() literals this replaces were tuned for dark only
+    // and turn into grey smudges once the panel goes light.
+    const tint = (color, pct) => `color-mix(in srgb, ${color} ${pct}%, transparent)`
+    const mix = (color, pct, base) => `color-mix(in srgb, ${color} ${pct}%, ${base})`
+    // Ink for a badge filled with a saturated state colour: it must contrast
+    // with that colour (not with the page), so it is a constant in both skins.
+    const INK_ON_SOLID = '#0e0e11'
+
     const css = {
-      panel: { boxSizing: 'border-box', padding: '20px 22px', color: T.text, fontSize: 13, lineHeight: 1.6, overflowY: 'auto', height: '100%', background: T.base },
+      panel: { boxSizing: 'border-box', padding: '20px 22px', color: T.text, fontSize: 13, lineHeight: 1.6, overflowY: 'auto', height: '100%' },
       head: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 },
       titleWrap: { display: 'flex', alignItems: 'center', gap: 10 },
-      iconBadge: { width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, rgba(91,140,255,0.18), rgba(245,166,35,0.14))', border: `1px solid ${T.border}`, color: T.brand, flex: 'none' },
+      iconBadge: { width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `linear-gradient(135deg, ${tint(T.brand, 18)}, ${tint(T.warn, 14)})`, border: `1px solid ${T.border}`, color: T.brand, flex: 'none' },
       h1: { fontSize: 17, fontWeight: 650, margin: 0, letterSpacing: '0.2px', display: 'flex', alignItems: 'center', gap: 8 },
       live: { width: 7, height: 7, borderRadius: '50%', background: T.success, animation: 'aihot-pulse 2.4s infinite' },
       sub: { color: T.tertiary, fontSize: 12, margin: '3px 0 0' },
@@ -265,23 +277,27 @@ window.__ModuleLoader__.load({
       // Outlined variant: same frame as css.btn, no fill. Used for the 修改 button
       // so it reads as a button without competing with the filled actions.
       btnOutline: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: 'transparent', color: T.sub, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
-      btnPrimary: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(91,140,255,0.45)', background: 'rgba(91,140,255,0.16)', color: T.brand, fontWeight: 600, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
+      btnPrimary: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: `1px solid ${tint(T.brand, 45)}`, background: tint(T.brand, 16), color: T.brand, fontWeight: 600, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
       field: { marginBottom: 9 },
       fieldLabel: { display: 'block', fontSize: 11.5, color: T.tertiary, marginBottom: 4 },
       input: { boxSizing: 'border-box', width: '100%', font: 'inherit', fontSize: 12, padding: '7px 10px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.base, color: T.text, outline: 'none' },
-      // Native <select> popups ignore most styling; colorScheme: 'dark' is what
-      // makes Chromium render the list dark instead of grey-on-grey.
-      select: { boxSizing: 'border-box', width: '100%', font: 'inherit', fontSize: 12, padding: '7px 10px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.base, color: T.text, outline: 'none', colorScheme: 'dark', cursor: 'pointer' },
+      // Native <select> popups ignore most styling; colorScheme is what makes
+      // Chromium render the list dark instead of grey-on-grey, so it is set per
+      // render from the host skin (see useDarkSkin) rather than hardcoded.
+      select: { boxSizing: 'border-box', width: '100%', font: 'inherit', fontSize: 12, padding: '7px 10px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.base, color: T.text, outline: 'none', cursor: 'pointer' },
       option: { background: T.layer1, color: T.text },
-      banner: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', padding: '9px 12px', marginBottom: 16, borderRadius: 10, border: `1px solid ${T.borderSoft}`, borderLeft: `3px solid ${T.brand}`, background: 'rgba(91,140,255,0.10)' },
+      // Banner and hero share one card chrome (radius 12, soft border, 3px
+      // semantic left bar, a tint mixed over layer1) so a warning strip and an
+      // event card read as the same family in both skins.
+      banner: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', padding: '12px 14px', marginBottom: 16, borderRadius: 12, border: 'var(--aihot-line-w, 1px) solid var(--aihot-line, #26262c)', borderLeft: `3px solid ${T.brand}`, boxShadow: 'var(--aihot-shadow, none)', background: `linear-gradient(135deg, ${mix(T.brand, 10, T.layer1)}, ${T.layer1} 60%)` },
       bannerText: { fontSize: 12, color: T.sub },
-      bridgeBox: { padding: '12px 14px', background: T.layer1, border: `1px dashed ${T.border}`, borderRadius: 10 },
+      bridgeBox: { padding: '12px 14px', background: 'var(--aihot-surface, #1a1a1f)', border: 'var(--aihot-line-w, 1px) dashed var(--aihot-dash, #2e2e36)', borderRadius: 10 },
       pathLine: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5, color: T.brand, marginTop: 6, wordBreak: 'break-all' },
       tabs: { display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${T.borderSoft}`, paddingBottom: 12 },
       tab: { fontSize: 13, fontWeight: 600, padding: '7px 16px', borderRadius: 8, border: '1px solid transparent', background: 'transparent', color: T.tertiary, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 7 },
-      tabActive: { background: 'rgba(91,140,255,0.12)', border: `1px solid rgba(91,140,255,0.35)`, color: T.brand },
+      tabActive: { background: tint(T.brand, 12), border: `1px solid ${tint(T.brand, 35)}`, color: T.brand },
       strip: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 10, marginBottom: 22 },
-      chip: { background: T.layer1, border: `1px solid ${T.borderSoft}`, borderRadius: 10, padding: '10px 12px' },
+      chip: { background: 'var(--aihot-surface, #1a1a1f)', border: 'var(--aihot-line-w, 1px) solid var(--aihot-line, #26262c)', boxShadow: 'var(--aihot-shadow, none)', borderRadius: 10, padding: '10px 12px' },
       chipTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
       chipName: { fontSize: 12, fontWeight: 600, color: T.sub },
       dot: (c) => ({ width: 8, height: 8, borderRadius: '50%', background: c, flex: 'none' }),
@@ -293,24 +309,30 @@ window.__ModuleLoader__.load({
       // section titles followed by a count badge.
       h2: { fontSize: 12, fontWeight: 600, margin: '0 0 10px', color: T.sub, textTransform: 'uppercase', letterSpacing: '0.6px', display: 'flex', alignItems: 'center', gap: 8 },
       count: { fontSize: 11, fontWeight: 600, color: T.sub, background: T.layer2, border: `1px solid ${T.borderSoft}`, borderRadius: 20, padding: '0 8px', lineHeight: '18px' },
-      hero: { background: `linear-gradient(135deg, rgba(245,166,35,0.10), ${T.layer1} 60%)`, border: `1px solid ${T.border}`, borderLeft: `3px solid ${T.warn}`, borderRadius: 12, padding: '14px 16px', marginBottom: 10 },
+      hero: { background: `linear-gradient(135deg, ${mix(T.warn, 12, T.layer1)}, ${T.layer1} 60%)`, border: 'var(--aihot-line-w, 1px) solid var(--aihot-line, #26262c)', borderLeft: `3px solid ${T.warn}`, boxShadow: 'var(--aihot-shadow, none)', borderRadius: 12, padding: '12px 14px', marginBottom: 10 },
       grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 },
-      card: { background: T.layer1, border: `1px solid ${T.borderSoft}`, borderRadius: 10, padding: '12px 14px', transition: 'all .15s ease' },
+      card: { background: 'var(--aihot-surface, #1a1a1f)', border: 'var(--aihot-line-w, 1px) solid var(--aihot-line, #26262c)', boxShadow: 'var(--aihot-shadow, none)', borderRadius: 10, padding: '12px 14px', transition: 'all .15s ease' },
       row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 },
       cardTitle: { fontWeight: 600, fontSize: 13, color: T.text, display: 'flex', alignItems: 'center', gap: 7 },
-      badge: (c) => ({ fontSize: 10.5, fontWeight: 600, padding: '2px 9px', borderRadius: 20, background: c, color: '#0e0e11', whiteSpace: 'nowrap', flex: 'none' }),
-      badgeSoft: (c) => ({ fontSize: 10.5, fontWeight: 600, padding: '2px 9px', borderRadius: 20, color: c, border: `1px solid ${c}`, background: 'transparent', whiteSpace: 'nowrap', flex: 'none' }),
+      badge: (c) => ({ fontSize: 10.5, fontWeight: 600, padding: '2px 9px', borderRadius: 20, background: c, color: INK_ON_SOLID, whiteSpace: 'nowrap', flex: 'none' }),
+      // A bare semantic colour on a white card is unreadable at 10.5px, so the
+      // ink is pulled towards the label colour: darker in the light skin, a touch
+      // lighter in the dark one, while the fill keeps the state's hue.
+      badgeSoft: (c) => ({ fontSize: 10.5, fontWeight: 600, padding: '2px 9px', borderRadius: 20, color: mix(c, 72, T.text), border: `1px solid ${tint(c, 55)}`, background: tint(c, 12), whiteSpace: 'nowrap', flex: 'none' }),
       meta: { fontSize: 12, color: T.sub, margin: '2px 0' },
       metaDim: { fontSize: 11.5, color: T.tertiary, margin: '2px 0' },
-      countdown: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: T.warn, background: 'rgba(245,166,35,0.12)', border: '1px solid rgba(245,166,35,0.3)', borderRadius: 8, padding: '3px 10px', marginTop: 0 },
+      countdown: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: T.warn, background: tint(T.warn, 12), border: `1px solid ${tint(T.warn, 30)}`, borderRadius: 8, padding: '3px 10px', marginTop: 0 },
       link: { color: T.brand, textDecoration: 'none', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 6, transition: 'opacity .15s' },
       tools: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 },
-      tool: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', background: T.layer1, border: `1px solid ${T.borderSoft}`, borderRadius: 8, transition: 'all .15s ease', cursor: 'pointer', textAlign: 'left', font: 'inherit', width: '100%' },
+      tool: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', background: 'var(--aihot-surface, #1a1a1f)', border: 'var(--aihot-line-w, 1px) solid var(--aihot-line, #26262c)', boxShadow: 'var(--aihot-shadow, none)', borderRadius: 8, transition: 'all .15s ease', cursor: 'pointer', textAlign: 'left', font: 'inherit', width: '100%' },
       toolDot: { width: 5, height: 5, borderRadius: '50%', background: T.brand, flex: 'none' },
       code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: T.brand, fontWeight: 600 },
       toolDesc: { fontSize: 11.5, color: T.tertiary, marginLeft: 'auto' },
-      empty: { color: T.dimmed, fontSize: 12.5, fontStyle: 'italic', padding: '14px 16px', background: T.layer1, border: `1px dashed ${T.border}`, borderRadius: 10 },
-      error: { color: T.error, fontSize: 12.5, padding: '12px 14px', background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.3)', borderRadius: 10, marginBottom: 16 },
+      // Empty states are normal content, not disabled text: same card surface and
+      // hairline as everything else, centred and upright so the sentence stays
+      // readable instead of fading into an italic grey.
+      empty: { color: T.tertiary, fontSize: 12.5, padding: '20px 16px', textAlign: 'center', lineHeight: 1.6, background: 'var(--aihot-surface, #1a1a1f)', border: 'var(--aihot-line-w, 1px) dashed var(--aihot-dash, #2e2e36)', borderRadius: 12 },
+      error: { color: T.error, fontSize: 12.5, padding: '12px 14px', background: tint(T.error, 8), border: `1px solid ${tint(T.error, 30)}`, borderRadius: 10, marginBottom: 16 },
       foot: { marginTop: 8, paddingTop: 14, borderTop: `1px solid ${T.borderSoft}`, fontSize: 11.5, color: T.sub, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', rowGap: 6 },
       dtoolbar: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
       dnav: { fontSize: 12, padding: '5px 12px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.layer1, color: T.sub, cursor: 'pointer', transition: 'all .15s ease' },
@@ -359,6 +381,16 @@ window.__ModuleLoader__.load({
           h('circle', { cx: 12, cy: 12, r: 1.7, fill: 'currentColor', stroke: 'none' }),
           h('line', { x1: 12, y1: 12, x2: 18, y2: 6 }),
           h('circle', { cx: 18, cy: 6, r: 1.7, fill: 'currentColor', stroke: 'none' })))
+    }
+
+    // Same viewBox, stroke weight and currentColor as RadarIcon: the two tab
+    // icons then share one visual rhythm instead of an emoji next to a stroke
+    // glyph (an emoji also carries its own colours, which clash in one skin).
+    function NewsIcon({ size = 18 }) {
+      return h('svg', { viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': true, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+        h('rect', { x: 3, y: 4.5, width: 13, height: 15, rx: 2 }),
+        h('path', { d: 'M16 8.5h2.5a1.5 1.5 0 0 1 1.5 1.5v7a2.5 2.5 0 0 1-2.5 2.5H16' }),
+        h('path', { d: 'M6.5 8.5h6M6.5 12h6M6.5 15.5h4' }))
     }
 
     // ---- Safe Markdown renderer (React elements only, no innerHTML) ----
@@ -543,18 +575,37 @@ window.__ModuleLoader__.load({
     // Beijing is the default zone for this data set, so it gets a human label.
     const tzLabel = (tz) => (tz === 'Asia/Shanghai' ? t('push.digest.tzCst') : (tz || 'Asia/Shanghai'))
 
+    // AIHOT keeps expired announcements in its 7-day window with status
+    // "announced" but flips presentation.status to an inferred state, and its own
+    // monitor.pendingCount already excludes them. Mirror that here, otherwise a
+    // five-day-old 预告 keeps sitting under 待生效预告 while the site says 暂无预告.
+    const isInferredEvent = (ev) => ev?.status === 'announced'
+      && (ev.presentation?.status === 'expired_unconfirmed' || ev.presentation?.status === 'likely_completed')
+
     function ProviderChip({ provider, resp }) {
+      const loading = !resp
       const err = resp?._error
       const events = resp?.events || []
       const monitor = resp?.monitor?.status || 'unknown'
-      const pending = events.filter((e) => e.status === 'announced')
+      const pending = events.filter((e) => e.status === 'announced' && !isInferredEvent(e))
       const confirmed = events.filter((e) => e.status === 'confirmed')
       const dotColor = err ? T.error : monitorColor(monitor)
       const dotTitle = err ? `${t('chip.failed')}: ${err}` : monitorTitle(monitor)
-      const meta = err ? t('chip.failed') : monitor === 'delayed' ? t('chip.delayed') : pending.length ? t('chip.hasPending') : t('chip.noPending')
+      // The value slot carries nothing but a number, so three chips can be scanned
+      // down the row; "what the number counts" lives in the meta line instead of
+      // being glued to it. A dash is reserved for the loading state, and a failure
+      // is a red "!" — the two must never look the same.
+      const count = pending.length || confirmed.length
+      const value = err ? '!' : loading ? '…' : String(count)
+      const meta = err ? t('chip.failedHint')
+        : loading ? t('empty.loading')
+        : monitor === 'delayed' ? t('chip.delayed')
+        : pending.length ? t('chip.metaPending')
+        : confirmed.length ? t('chip.metaRecent')
+        : t('chip.noPending')
       return h('div', { style: css.chip },
         h('div', { style: css.chipTop }, h('span', { style: css.chipName }, provider.label), h('span', { style: css.dot(dotColor), title: dotTitle })),
-        h('div', { style: css.chipVal }, err ? '—' : pending.length ? t('chip.pending', { n: pending.length }) : confirmed.length ? t('chip.recent', { n: confirmed.length }) : '—'),
+        h('div', { style: { ...css.chipVal, color: err ? T.error : T.text } }, value),
         h('div', { style: css.chipMeta }, meta))
     }
 
@@ -582,15 +633,26 @@ window.__ModuleLoader__.load({
       const when = event.estimate?.label || event.schedule?.label
       const post = event.posts?.[0]
       const postUrl = post?.url || (post?.id ? `https://x.com/i/status/${post.id}` : null)
+      // An expired announcement is not a confirmation: AIHOT only inferred that
+      // it probably landed, so it must not wear the green 已到账 badge.
+      const inferred = isInferredEvent(event)
+      const confirmed = event.status === 'confirmed'
+      const tone = inferred ? T.warn : confirmed ? T.success : T.tertiary
+      const badge = inferred ? t('badge.inferred') : confirmed ? t('badge.confirmed') : t('badge.announced')
+      // The badge already states the verdict, so the longer reason lives in its
+      // tooltip: hovering explains why, the card stays one line shorter.
+      const reason = inferred
+        ? (event.presentation?.status === 'expired_unconfirmed' ? t('inferred.expired') : t('inferred.likely'))
+        : null
       return h('div', { style: css.card, className: 'aihot-card' },
         h('div', { style: css.row },
-          h('span', { style: css.cardTitle }, h('span', { style: css.dot(T.success) }), `${provider.label} · ${event.displayLabel || event.label || t('reset.default')}`),
-          h('span', { style: css.badgeSoft(T.success) }, t('badge.confirmed'))),
+          h('span', { style: css.cardTitle }, h('span', { style: css.dot(tone) }), `${provider.label} · ${event.displayLabel || event.label || t('reset.default')}`),
+          h('span', { style: css.badgeSoft(tone), title: reason || undefined }, badge)),
         when ? h('div', { style: css.metaDim }, when) : null,
         postUrl ? h('a', { style: css.link, href: postUrl, target: '_blank', rel: 'noreferrer' }, t('link.sourceShort'), h('span', null, '↗')) : null)
     }
 
-    function RadarContent({ nonce, onMonitor }) {
+    function RadarContent({ nonce, onMonitor, dark = true }) {
       const [data, setData] = useState({})
       const [loading, setLoading] = useState(true)
       const [failed, setFailed] = useState([])
@@ -858,7 +920,7 @@ window.__ModuleLoader__.load({
           const resp = data[p.id]
           if (resp?.checkedAt && (!apiCheckedAt || resp.checkedAt > apiCheckedAt)) apiCheckedAt = resp.checkedAt
           for (const ev of resp?.events || []) {
-            if (ev.status === 'announced') pending.push({ provider: p, event: ev, outage: resp?.outage })
+            if (ev.status === 'announced' && !isInferredEvent(ev)) pending.push({ provider: p, event: ev, outage: resp?.outage })
             else recent.push({ provider: p, event: ev })
           }
         }
@@ -878,7 +940,7 @@ window.__ModuleLoader__.load({
         h('div', { style: css.field },
           h('label', { style: css.fieldLabel, htmlFor: 'aihot-chan' }, t('push.field.channel')),
           h('select', {
-            id: 'aihot-chan', style: css.select, value: form.channel,
+            id: 'aihot-chan', style: { ...css.select, colorScheme: dark ? 'dark' : 'light' }, value: form.channel,
             onChange: (e) => setForm({ channel: e.target.value, url: '', secret: '' }),
           }, CHANNELS.map((c) => h('option', { key: c, value: c, style: css.option }, t('chan.' + c))))),
         form.channel === 'none' ? null : h('div', null,
@@ -1114,15 +1176,40 @@ window.__ModuleLoader__.load({
           toast.body ? h('span', { className: 'aihot-toast-sub' }, toast.body) : null)) : null)
     }
 
+    // DSH marks the dark skin with <body data-ds-dark-theme> — the same contract
+    // the host's own UI and dsh-context read. Follow that attribute instead of
+    // guessing from a colour probe: a skin may be light with a dark brand colour.
+    function useDarkSkin() {
+      const [dark, setDark] = useState(true)
+      useEffect(() => {
+        const body = document.body
+        if (!body) return
+        const read = () => setDark(body.hasAttribute('data-ds-dark-theme'))
+        read()
+        if (typeof MutationObserver === 'undefined') return
+        const mo = new MutationObserver(read)
+        mo.observe(body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+        return () => mo.disconnect()
+      }, [])
+      return dark
+    }
+
     function RadarPanel() {
       LANG = useActiveLang()
+      const dark = useDarkSkin()
       const [tab, setTab] = useState('radar')
       const [nonce, setNonce] = useState(0)
       const [monitor, setMonitor] = useState('unknown')
 
       useEffect(() => {
         const sheet = `
-          @keyframes aihot-pulse { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,0.5); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
+          /* Surfaces follow the host skin the way dsh-context does: the dark skin
+             keeps the layer-1 fill and lets the wallpaper show through, while the
+             light skin gets an opaque neutral canvas, hairline borders and the
+             host's level-1 shadow so cards read as objects instead of grey mush. */
+          .aihot-radar-panel { --aihot-surface: var(--dsw-alias-bg-layer-1, #1a1a1f); --aihot-line: var(--dsw-alias-border-l1, #26262c); --aihot-dash: var(--dsw-alias-border-l2, #2e2e36); --aihot-line-w: 1px; --aihot-shadow: none; background: var(--dsw-alias-bg-base, #0e0e11); }
+          body:not([data-ds-dark-theme]) .aihot-radar-panel { --aihot-surface: var(--dsw-alias-bg-layer-1, #ffffff); --aihot-line: var(--dsw-alias-border-l3, #e3e6ea); --aihot-dash: var(--dsw-alias-border-l4, #d5d9de); --aihot-line-w: 0.5px; --aihot-shadow: var(--dsw-shadow-lv1, 0 1px 2px rgba(0,0,0,0.06)); background: var(--dsw-static-neutral-bluish-75, #f4f6f8); }
+          @keyframes aihot-pulse { 0% { box-shadow: 0 0 0 0 ${tint(T.success, 50)}; } 70% { box-shadow: 0 0 0 6px ${tint(T.success, 0)}; } 100% { box-shadow: 0 0 0 0 ${tint(T.success, 0)}; } }
           @media (prefers-reduced-motion: reduce) { .aihot-pulse { animation: none !important; } .aihot-toast { animation: none !important; } }
           .aihot-radar-panel::-webkit-scrollbar { width: 8px; }
           .aihot-radar-panel::-webkit-scrollbar-track { background: transparent; }
@@ -1135,7 +1222,7 @@ window.__ModuleLoader__.load({
           .aihot-tab:hover { color: ${T.sub}; background: ${T.hover}; }
           .aihot-tool:active { transform: scale(0.98); }
           .aihot-tool-copied { border-color: ${T.success}; background: ${T.layer2}; }
-          .aihot-digest-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: 88px; max-height: 172px; overflow-y: auto; padding: 4px; border-radius: 8px; border: 1px solid ${T.border}; background: ${T.layer1}; box-shadow: 0 10px 24px rgba(0,0,0,0.35); }
+          .aihot-digest-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: 88px; max-height: 172px; overflow-y: auto; padding: 4px; border-radius: 8px; border: 1px solid ${T.border}; background: ${T.layer1}; box-shadow: 0 10px 24px rgba(0,0,0,0.18); }
           .aihot-digest-item { display: block; width: 100%; text-align: left; padding: 5px 8px; margin: 0; border: 0; border-radius: 6px; background: transparent; color: ${T.sub}; font: inherit; font-size: 12px; cursor: pointer; }
           .aihot-digest-item:hover { background: ${T.hover}; color: ${T.text}; }
           .aihot-digest-item-on, .aihot-digest-item-on:hover { color: ${T.brand}; font-weight: 600; }
@@ -1144,9 +1231,9 @@ window.__ModuleLoader__.load({
           .aihot-digest-menu::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 8px; }
           .aihot-toast { position: fixed; z-index: 999; pointer-events: none; display: flex; align-items: flex-start; gap: 8px; box-sizing: border-box; max-width: 80vw; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; transform: translateX(-50%); animation: aihot-toast-in .2s ease; }
           /* Alpha tints + theme label tokens, so both light and dark themes stay readable. */
-          .aihot-toast-ok { background: rgba(52,199,89,0.16); border: 1px solid rgba(52,199,89,0.65); color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }
-          .aihot-toast-err { background: rgba(255,77,79,0.14); border: 1px solid rgba(255,77,79,0.65); color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }
-          .aihot-toast-icon { width: 18px; height: 18px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #0e0e11; background: ${T.success}; margin-top: 1px; }
+          .aihot-toast-ok { background: ${mix(T.success, 16, T.layer1)}; border: 1px solid ${tint(T.success, 65)}; color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }
+          .aihot-toast-err { background: ${mix(T.error, 14, T.layer1)}; border: 1px solid ${tint(T.error, 65)}; color: ${T.text}; box-shadow: 0 8px 22px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.10); }
+          .aihot-toast-icon { width: 18px; height: 18px; border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: ${INK_ON_SOLID}; background: ${T.success}; margin-top: 1px; }
           .aihot-toast-err .aihot-toast-icon { background: ${T.error}; color: #fff; }
           .aihot-toast-body { min-width: 0; }
           .aihot-toast-title { font-weight: 650; font-size: 12.5px; }
@@ -1175,9 +1262,9 @@ window.__ModuleLoader__.load({
 
         h('div', { style: css.tabs, role: 'tablist' },
           h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'radar', style: { ...css.tab, ...(tab === 'radar' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('radar') }, h(RadarIcon, { size: 18, scale: 1.2 }), t('tab.radar')),
-          h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'daily', style: { ...css.tab, ...(tab === 'daily' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('daily') }, '📰', t('tab.daily'))),
+          h('button', { type: 'button', role: 'tab', 'aria-selected': tab === 'daily', style: { ...css.tab, ...(tab === 'daily' ? css.tabActive : {}) }, className: 'aihot-tab', onClick: () => setTab('daily') }, h(NewsIcon, { size: 18 }), t('tab.daily'))),
 
-        tab === 'radar' ? h(RadarContent, { nonce, onMonitor: setMonitor }) : h(DailyReport, { nonce }),
+        tab === 'radar' ? h(RadarContent, { nonce, onMonitor: setMonitor, dark }) : h(DailyReport, { nonce }),
 
         h('div', { style: css.foot },
           t('foot.source'), h('a', { style: { ...css.link, marginTop: 0 }, className: 'aihot-link', href: BASE, target: '_blank', rel: 'noreferrer' }, 'AIHOT', h('span', null, '↗')),

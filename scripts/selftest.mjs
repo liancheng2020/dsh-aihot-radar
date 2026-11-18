@@ -61,6 +61,16 @@ await atest('A3 7 announced -> round1 5/seen5, round2 2/seen7', async () => {
   r = await scanProvider(api, 'codex', state, notifier)
   assert.equal(r.notified.length, 2); assert.equal(state.seen.codex.length, 7)
 })
+await atest('A3b an expired announcement is history, not pending', async () => {
+  const mk = (id, ps) => ({ id, status: 'announced', displayLabel: 'x', title: 't', presentation: { status: ps }, posts: [] })
+  const notifier = { send: async () => ({ ok: true, chunks: 1 }) }
+  const state = { seen: {}, webhook: { channel: 'generic', url: 'x' }, lastCheck: {} }
+  const api = { resetsRecent: async () => ({ events: [mk('open1', 'announced'), mk('old1', 'likely_completed')] }) }
+  const r = await scanProvider(api, 'codex', state, notifier)
+  assert.equal(r.pending.length, 1, 'only the open announcement is pending')
+  assert.equal(r.pending[0].id, 'open1')
+  assert.equal(r.events.length, 2, 'history still carries both events')
+})
 await atest('A3 first run only announced; confirmed baselined', async () => {
   const mk = (id, status) => ({ id, status, displayLabel: 'x', title: 't', presentation: { status }, posts: [] })
   const sent = []
