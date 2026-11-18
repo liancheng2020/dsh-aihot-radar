@@ -101,6 +101,7 @@
   "push.save": "Save only",
   "push.saving": "Saving…",
   "push.edit": "Edit",
+  "push.setup": "Set up push",
   "push.cancel": "Cancel",
   "push.saved": "Saved; applies from the next push.",
   "push.disable": "Turn off",

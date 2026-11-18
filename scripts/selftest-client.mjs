@@ -236,7 +236,18 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   check('P16 保存为主按钮，动作行在控件下方、提交位在最后',
     saveBtn.props.style.fontWeight === 600
     && !!actRow && actRow.props.style.marginLeft !== 'auto'
-    && actLabels[0] === '发送测试日报' && actLabels[1] === '保存日报设置')
+    && actLabels[0] === '取消修改' && actLabels[1] === '发送测试日报' && actLabels[2] === '保存日报设置')
+
+  // P19: the digest draft is discardable. 取消修改 sits in the exit slot (first)
+  // and only exists while the draft differs from the host, so it is never a
+  // permanently dead button.
+  findButton(treeD, '取消修改').props.onClick()
+  treeD = await render()
+  check('P19 取消修改: 回到宿主值（开关关、时间 08:30）',
+    findById(treeD, 'aihot-digest-on').props.checked === false
+    && findById(treeD, 'aihot-digest-time').props.value === '08:30')
+  check('P19 无草稿时不显示取消修改，保存同时置灰',
+    !findButton(treeD, '取消修改') && findButton(treeD, '保存日报设置').props.disabled === true)
 
   // focus opens the half-hour preset list
   findById(treeD, 'aihot-digest-time').props.onFocus()
@@ -310,14 +321,37 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   dispose()
 }
 
-// ---- unconfigured: the panel opens the form instead of a dead-end hint ----
+// ---- unconfigured: the panel lands on the summary, the form is opt-in ----
 {
   hostConfigured = false
   const { render, dispose } = await loadPanel('zh')
-  const tree = await render()
+  let tree = await render()
+  // P22: re-entering DSH used to drop the user straight into the editor because
+  // /status said "not configured". The summary now states the state and offers
+  // 配置推送, so opening a form is the user's call, not a side effect of mount.
   const select = [...walk(tree)].find((n) => n.type === 'select')
-  check('P3 未配置: 直接给出表单', !!select && !!findButton(tree, '保存并发送测试') && stringify(tree).includes('还没有配置推送通道'))
+  check('P22 未配置: 默认停在摘要，不自动打开表单',
+    !select && !findButton(tree, '保存并发送测试') && !!findButton(tree, '配置推送'))
+  check('P3 未配置: 摘要给出状态与配置入口',
+    !!findButton(tree, '配置推送') && stringify(tree).includes('还没有配置推送通道'))
   check('P4 未配置: 顶部有入口引导', stringify(tree).includes('推送还没配置') && !!findButton(tree, '现在配置'))
+  // P21: nothing is saved on this card — the slot that opens the form is named
+  // after what it does, so 仅保存 only ever appears where a draft can be saved.
+  check('P21 未配置摘要不给「仅保存」，改叫「配置推送」',
+    !findButton(tree, '仅保存') && !findButton(tree, '修改')
+    && findButton(tree, '配置推送').props.style.background !== 'transparent')
+  findButton(tree, '配置推送').props.onClick()
+  tree = await render()
+  check('P20 未配置: 从摘要进入表单，且不出现「关闭推送」',
+    !!findButton(tree, '保存并发送测试') && !findButton(tree, '关闭推送'))
+  // The form is also a place you can leave: first run has no draft worth keeping,
+  // so 取消 must be there too (it used to be gated on host.configured).
+  findButton(tree, '取消').props.onClick()
+  tree = await render()
+  check('P20 未配置: 取消回到摘要，不再卡在表单里',
+    ![...walk(tree)].some((n) => n.type === 'select') && !!findButton(tree, '配置推送'))
+  findButton(tree, '配置推送').props.onClick()
+  tree = await render()
   {
     // C9: the banner and the event hero share one card chrome, and every tint
     // is derived with color-mix from a theme token (no rgba literals tuned for
@@ -371,7 +405,7 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   findButton(tree, '确认关闭？').props.onClick()
   await sleep(120)
   tree = await render()
-  check('P7 关闭后回到未配置态', !!findButton(tree, '仅保存') && stringify(tree).includes('已关闭推送'))
+  check('P7 关闭后回到未配置态', !!findButton(tree, '配置推送') && stringify(tree).includes('已关闭推送'))
   dispose()
 }
 
@@ -426,7 +460,8 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   check('P5 桥接首次不可达: 给出降级与手填方案', stringify(tree).includes('面板拿不到宿主状态') && !!findButton(tree, '重试') && stringify(tree).includes('state.json'))
   await sleep(2000)
   tree = await render()
-  check('P5 自动重试后恢复成表单', !!findButton(tree, '保存并发送测试'))
+  check('P5 自动重试后恢复成配置区（摘要 + 入口）',
+    !!findButton(tree, '配置推送') && !stringify(tree).includes('面板拿不到宿主状态'))
   dispose()
   hostConfigured = true
 }

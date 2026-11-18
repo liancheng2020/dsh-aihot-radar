@@ -127,7 +127,7 @@ window.__ModuleLoader__.load({
         'push.field.channel': '推送通道', 'push.field.url': 'Webhook 地址', 'push.field.token': 'Bot Token',
         'push.field.secret': '加签密钥（可选）', 'push.field.chat': 'chat_id',
         'push.saveTest': '保存并发送测试', 'push.save': '仅保存', 'push.saving': '保存中…',
-        'push.edit': '修改', 'push.cancel': '取消', 'push.saved': '已保存，下一轮推送即生效。',
+        'push.edit': '修改', 'push.setup': '配置推送', 'push.cancel': '取消', 'push.saved': '已保存，下一轮推送即生效。',
         'push.disable': '关闭推送', 'push.disableConfirm': '确认关闭？', 'push.disabled': '已关闭推送，可随时重新配置。',
         'push.test': '发送测试推送', 'push.testing': '发送中…',
         'push.testOk': '测试推送成功：{c} 通道正常，发出 {n} 条。',
@@ -136,7 +136,7 @@ window.__ModuleLoader__.load({
         'push.digest.desc': '到点把当天 AI 日报推到上面的通道，并在本地归档一份 Markdown。',
         'push.digest.onBadge': '已启用', 'push.digest.offBadge': '未启用',
         'push.digest.on': '启用定时推送', 'push.digest.time': '推送时间',
-        'push.digest.save': '保存日报设置',
+        'push.digest.save': '保存日报设置', 'push.digest.cancel': '取消修改',
         'push.digest.saved': '日报已改为每天 {t} 推送。', 'push.digest.next': '下次推送：{t}（{z}）',
         'push.digest.tzCst': '北京时间',
         'push.digest.needPush': '还没配置推送通道：日报只会归档到本地，不会推出去。',
@@ -194,7 +194,7 @@ window.__ModuleLoader__.load({
         'push.field.channel': 'Channel', 'push.field.url': 'Webhook URL', 'push.field.token': 'Bot Token',
         'push.field.secret': 'Sign secret (optional)', 'push.field.chat': 'chat_id',
         'push.saveTest': 'Save and send test', 'push.save': 'Save only', 'push.saving': 'Saving…',
-        'push.edit': 'Edit', 'push.cancel': 'Cancel', 'push.saved': 'Saved; applies from the next push.',
+        'push.edit': 'Edit', 'push.setup': 'Set up push', 'push.cancel': 'Cancel', 'push.saved': 'Saved; applies from the next push.',
         'push.disable': 'Turn off', 'push.disableConfirm': 'Confirm?', 'push.disabled': 'Push turned off; configure it again anytime.',
         'push.test': 'Send test push', 'push.testing': 'Sending…',
         'push.testOk': 'Test push via {c} succeeded, {n} message(s) sent.',
@@ -203,7 +203,7 @@ window.__ModuleLoader__.load({
         'push.digest.desc': 'Sends the day\'s AI digest to the channel above at the set time, and archives a Markdown copy locally.',
         'push.digest.onBadge': 'Enabled', 'push.digest.offBadge': 'Off',
         'push.digest.on': 'Scheduled push', 'push.digest.time': 'Send time',
-        'push.digest.save': 'Save digest settings',
+        'push.digest.save': 'Save digest settings', 'push.digest.cancel': 'Discard',
         'push.digest.saved': 'Digest now goes out daily at {t}.', 'push.digest.next': 'Next run: {t} ({z})',
         'push.digest.tzCst': 'Beijing time',
         'push.digest.needPush': 'No push channel yet: the digest is only archived locally.',
@@ -746,7 +746,11 @@ window.__ModuleLoader__.load({
             if (!res.ok) throw new Error('http ' + res.status)
             const j = await res.json()
             if (cancelled) return
-            setBridgeErr(''); setBridgeDiag(''); setHost(j); if (!j.configured) setEditing(true)
+            // Do not force the editor open just because nothing is configured:
+            // the summary card carries a 配置推送 entry and the top banner has
+            // 现在配置, so re-entering DSH must not drop the user into a form
+            // they did not ask for. Editing is entered by intent only.
+            setBridgeErr(''); setBridgeDiag(''); setHost(j)
             // Effective digest settings (panel preference > config default), so
             // the switch reflects what the host will actually do.
             if (j.digestCfg) {
@@ -965,10 +969,13 @@ window.__ModuleLoader__.load({
         // commit (保存并发送测试) last, at the right edge. Only committing actions
         // get btnPrimary, so order and visual weight stay two separate rules.
         h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-          host?.configured ? h('button', {
+          // Always offered, not just when a channel exists: on first run the panel
+          // opens the form itself, and without this the only way out was to save
+          // something. It discards the draft and goes back to the summary.
+          h('button', {
             type: 'button', style: css.btn, disabled: !!busy,
             onClick: () => { setEditing(false); setOffConfirm(false); setResult(null) },
-          }, t('push.cancel')) : null,
+          }, t('push.cancel')),
           host?.configured ? h('button', {
             type: 'button', disabled: !!busy,
             style: { ...css.btn, color: offConfirm ? T.error : T.sub, borderColor: offConfirm ? T.error : T.border },
@@ -988,11 +995,12 @@ window.__ModuleLoader__.load({
         host.urlHost ? h('div', { style: css.metaDim }, t('push.current', { h: host.urlHost })) : null,
         h('div', { style: css.metaDim }, host.configured ? t('push.hint') : t('push.empty')),
         // Same rule as the form footer: 测试 (light, reversible) first, the
-        // action that commits (修改 / 去配置) last, at the right edge.
+        // action that commits (修改 / 配置推送) last, at the right edge.
         // 修改 is an outlined (not filled) button: it only opens the editor, so
         // it keeps the same frame as its neighbours without the filled body that
         // made it read like the card's main action. When nothing is configured
-        // that slot says 保存 and leads into the form, so it stays filled.
+        // that slot opens the form, so it says 配置推送 rather than 仅保存 (there
+        // is nothing to save yet) and stays filled as the card's main action.
         h('div', { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
           h('button', {
             type: 'button', disabled: !!busy || !host.configured, className: 'aihot-btn',
@@ -1003,12 +1011,19 @@ window.__ModuleLoader__.load({
             type: 'button', disabled: !!busy, className: 'aihot-btn',
             style: host.configured ? css.btnOutline : css.btn,
             onClick: openForm,
-          }, host.configured ? t('push.edit') : t('push.save'))))
+          }, host.configured ? t('push.edit') : t('push.setup'))))
 
       const digHm = normHm(digTime) // '' while the typed text is not a valid time
       const digestDirty = () => {
         const d = host?.digestCfg || {}
         return digOn !== !!d.enabled || digHm !== (d.time || '08:30')
+      }
+      // The digest card edits a draft in place, so it needs its own way back:
+      // with save alone, one stray tick would stick until the host re-reads.
+      const resetDigest = () => {
+        const d = host?.digestCfg || {}
+        setDigOn(!!d.enabled); setDigTime(d.time || '08:30')
+        setDigOpen(false); setDigActive(-1)
       }
 
       // Themed combobox: type any HH:MM, or pick one of the half-hour presets.
@@ -1107,6 +1122,11 @@ window.__ModuleLoader__.load({
             // 保存 (the commit) last — the same order as the card above and the
             // form footer, so the panel has one action layout, not three.
             h('div', { key: 'act', style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
+              // Exit first, and only while there is something to discard: a
+              // permanently disabled 取消 would just be dead weight.
+              digestDirty() ? h('button', {
+                type: 'button', disabled: !!busy, style: css.btn, onClick: resetDigest,
+              }, t('push.digest.cancel')) : null,
               h('button', {
                 type: 'button', disabled: !!busy || !host.configured,
                 style: (busy || !host.configured) ? { ...css.btn, opacity: 0.5, cursor: 'not-allowed' } : css.btn,

@@ -101,6 +101,7 @@
   "push.save": "仅保存",
   "push.saving": "保存中…",
   "push.edit": "修改",
+  "push.setup": "配置推送",
   "push.cancel": "取消",
   "push.saved": "已保存，下一轮推送即生效。",
   "push.disable": "关闭推送",
