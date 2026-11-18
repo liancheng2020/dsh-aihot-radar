@@ -42,11 +42,11 @@ dsh plugin --profile web add dsh-aihot-radar
 # 或从 GitHub 仓库直装
 dsh plugin --profile web add github:liancheng2020/dsh-aihot-radar
 # 或从 Release 直链安装预构建包
-dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.3.2/dsh-aihot-radar-0.3.2.tgz
+dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.4.0/dsh-aihot-radar-0.4.0.tgz
 ```
 装完重启 DSH，出现 **AIHOT 雷达** 面板即生效。
 
-> 当前版本 `0.3.2`（见 [CHANGELOG](CHANGELOG.md)）。npm 包与 Release `.tgz` 同源，`npm view dsh-aihot-radar version` 可确认已发布版本。
+> 当前版本 `0.4.0`（见 [CHANGELOG](CHANGELOG.md)）。npm 包与 Release `.tgz` 同源，`npm view dsh-aihot-radar version` 可确认已发布版本。
 
 ## 配置推送（可选）
 

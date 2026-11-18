@@ -1,6 +1,6 @@
 {
   "name": "dsh-aihot-radar",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "AIHOT 雷达 + 资讯值班：Codex/Claude/Antigravity 额度重置实时推送，外加 AIHOT 资讯 Agent 工具。免 Key、零运行时依赖。",
   "author": "liancheng2020",
   "type": "module",
