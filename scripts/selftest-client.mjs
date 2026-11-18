@@ -97,6 +97,8 @@ let hostDigestCfg = true
 let hostDigestState = {}
 let hostDigestTz = 'Asia/Shanghai'
 let statusFails = 0
+let webhookErr = false
+let digestErr = false
 const fetchMock = async (url, init) => {
   const u = String(url)
   if (u.startsWith('http://127.0.0.1:17420/status')) {
@@ -104,6 +106,8 @@ const fetchMock = async (url, init) => {
     return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: hostDigestState, radar: { quiet: { start: '', end: '' }, muted: [] }, ...(hostDigestCfg ? { digestCfg: { enabled: false, time: '08:30', timezone: hostDigestTz, nextRunAt: Date.now() + 3600000 } } : {}) }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/webhook')) {
+    // Host-side rejection (200 + ok:false), the path that used to leave busy set.
+    if (webhookErr) return { ok: true, status: 200, json: async () => ({ ok: false, message: '通道地址无效' }) }
     const body = JSON.parse(init?.body || '{}')
     const off = body.channel === 'none'
     return { ok: true, status: 200, json: async () => ({ ok: true, channel: body.channel || 'wecom', configured: !off, urlHost: off ? '' : 'qyapi.weixin.qq.com' }) }
@@ -114,6 +118,7 @@ const fetchMock = async (url, init) => {
     return { ok: true, status: 200, json: async () => ({ ok: true, date: '2026-11-16', chunks: 2 }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/digest')) {
+    if (digestErr) return { ok: true, status: 200, json: async () => ({ ok: false, message: '保存失败：磁盘只读' }) }
     const body = JSON.parse(init?.body || '{}')
     return { ok: true, status: 200, json: async () => ({ ok: true, enabled: body.enabled === true, time: body.time || '08:30', nextRunAt: Date.now() + 3600000 }) }
   }
@@ -321,6 +326,21 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   dispose()
 }
 
+// ---- delayed monitor: the count keeps its meaning, the delay is additive ----
+{
+  DATA.codex.monitor.status = 'delayed'
+  DATA.claude.monitor.status = 'delayed'
+  const { render, dispose } = await loadPanel('zh')
+  const html = stringify(await render())
+  check('C12 延迟时仍说明计数：待生效预告 · 数据延迟',
+    html.includes('待生效预告 · 数据延迟'))
+  check('C12 延迟时仍说明计数：近 7 天已到账 · 数据延迟',
+    html.includes('近 7 天已到账 · 数据延迟'))
+  dispose()
+  DATA.codex.monitor.status = 'healthy'
+  DATA.claude.monitor.status = 'healthy'
+}
+
 // ---- unconfigured: the panel lands on the summary, the form is opt-in ----
 {
   hostConfigured = false
@@ -409,6 +429,58 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   dispose()
 }
 
+// ---- a host-side rejection must not leave the card stuck in busy ----
+{
+  hostConfigured = true
+  const { render, dispose } = await loadPanel('zh')
+  let tree = await render()
+  findButton(tree, '修改').props.onClick()
+  tree = await render()
+
+  // 关闭推送 is a second early-return: the confirm step had already consumed
+  // offConfirm, so a stuck busy flag left the user with no button at all — the
+  // primary one is not even findable, its label stays 「保存中…」.
+  webhookErr = true
+  findButton(tree, '关闭推送').props.onClick()
+  tree = await render()
+  findButton(tree, '确认关闭？').props.onClick()
+  await sleep(80)
+  tree = await render()
+  const webhookSave = findButton(tree, '保存并发送测试')
+  check('P23 关闭推送被拒: 错误可见且按钮解锁',
+    stringify(tree).includes('通道地址无效')
+    && !!webhookSave && webhookSave.props.disabled !== true
+    && findButton(tree, '取消')?.props.disabled !== true)
+
+  // The same form can be corrected and retried: 保存并发送测试 holds busy until
+  // the test step settles, then unlocks into the summary.
+  webhookErr = false
+  findButton(tree, '保存并发送测试')?.props.onClick()
+  await sleep(120)
+  tree = await render()
+  check('P23 修正后重试成功并回到摘要',
+    stringify(tree).includes('测试推送成功') && !!findButton(tree, '修改'))
+
+  // 保存日报 has the same shape: rejected save keeps the draft and the retry.
+  findById(tree, 'aihot-digest-on')?.props.onChange({ target: { checked: true } })
+  tree = await render()
+  digestErr = true
+  findButton(tree, '保存日报设置')?.props.onClick()
+  await sleep(80)
+  tree = await render()
+  const digestSave = findButton(tree, '保存日报设置')
+  check('P23 日报保存被拒: 错误可见、可取消可重试',
+    stringify(tree).includes('磁盘只读')
+    && !!digestSave && digestSave.props.disabled !== true
+    && findButton(tree, '取消修改')?.props.disabled !== true)
+  digestErr = false
+  findButton(tree, '保存日报设置')?.props.onClick()
+  await sleep(80)
+  tree = await render()
+  check('P23 日报改后重试成功', stringify(tree).includes('日报已改为每天 08:30 推送'))
+  dispose()
+}
+
 // ---- digest run state: failures are visible, success is acknowledged ----
 {
   hostDigestState = { retryDate: '2026-11-15', lastError: 'webhook 超时', retries: 3 }
@@ -482,12 +554,20 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
 
 // ---- en radar tab ----
 {
+  DATA.codex.monitor.status = 'delayed'
+  DATA.claude.monitor.status = 'delayed'
   const { render, dispose } = await loadPanel('en')
   const tree = await render()
   const html = stringify(tree)
   check('C2 en: Quota Radar/Refresh', html.includes('Quota Radar') && html.includes('Refresh'))
-  check('C2 en: 无中文残留', !html.includes('额度雷达') && !html.includes('待生效预告'))
+  check('C2 en: 无中文残留',
+    !html.includes('额度雷达') && !html.includes('待生效预告') && !html.includes('数据延迟'))
+  check('C12 en: 延迟时同时给出计数说明',
+    html.includes('pending announcement · Data delayed')
+    && html.includes('confirmed in 7 days · Data delayed'))
   dispose()
+  DATA.codex.monitor.status = 'healthy'
+  DATA.claude.monitor.status = 'healthy'
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

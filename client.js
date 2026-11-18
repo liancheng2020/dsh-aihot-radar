@@ -597,12 +597,16 @@ window.__ModuleLoader__.load({
       // is a red "!" — the two must never look the same.
       const count = pending.length || confirmed.length
       const value = err ? '!' : loading ? '…' : String(count)
-      const meta = err ? t('chip.failedHint')
-        : loading ? t('empty.loading')
-        : monitor === 'delayed' ? t('chip.delayed')
-        : pending.length ? t('chip.metaPending')
+      // The count label must survive a delayed monitor: 「数据延迟」 used to replace
+      // it, so "Codex / 1 / 数据延迟" dropped the only clue that 1 meant 待生效预告.
+      // The delay is now shown beside the label, not instead of it.
+      const countLabel = pending.length ? t('chip.metaPending')
         : confirmed.length ? t('chip.metaRecent')
         : t('chip.noPending')
+      const meta = err ? t('chip.failedHint')
+        : loading ? t('empty.loading')
+        : monitor === 'delayed' ? `${countLabel} · ${t('chip.delayed')}`
+        : countLabel
       return h('div', { style: css.chip },
         h('div', { style: css.chipTop }, h('span', { style: css.chipName }, provider.label), h('span', { style: css.dot(dotColor), title: dotTitle })),
         h('div', { style: { ...css.chipVal, color: err ? T.error : T.text } }, value),
@@ -784,18 +788,26 @@ window.__ModuleLoader__.load({
         return res.json()
       }
 
-      const testPush = async () => {
-        setBusy('test'); setResult(null)
+      // Core call only: the caller owns the busy flag, so 保存并发送测试 can hold
+      // it across both steps instead of unlocking in between.
+      const pushTest = async () => {
         try {
           const j = await post('/test-push')
           setResult(j.ok
             ? { ok: true, message: t('push.testOk', { c: j.channel || '', n: j.chunks || 1 }) }
             : { ok: false, message: j.message || j.error || '', hint: j.hint || '' })
         } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
+      }
+
+      const testPush = async () => {
+        setBusy('test'); setResult(null)
+        await pushTest()
         setBusy('')
       }
 
       // Save first, then test: a failure tells the user which step broke.
+      // Every path (including a host-side rejection) ends in `finally`: a stuck
+      // busy flag would disable the whole card, leaving no retry and no cancel.
       const saveWebhook = async (thenTest) => {
         setBusy('save'); setResult(null)
         try {
@@ -805,10 +817,12 @@ window.__ModuleLoader__.load({
           setEditing(false)
           setForm({ channel: j.channel, url: '', secret: '' })
           resyncDigest()
-          if (thenTest) { setBusy(''); return testPush() }
+          // Stay busy as 'test' until the second step settles: the button must not
+          // unlock between saving and testing.
+          if (thenTest) { setBusy('test'); await pushTest(); return }
           setResult({ ok: true, message: t('push.saved') })
         } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
-        setBusy('')
+        finally { setBusy('') }
       }
 
       // Digest preference lives in state.json too, so saving applies at once and
@@ -824,7 +838,7 @@ window.__ModuleLoader__.load({
           setHost((prev) => (prev ? { ...prev, digestCfg: { ...(prev.digestCfg || {}), enabled: j.enabled, time: j.time, nextRunAt: j.nextRunAt || null } } : prev))
           setResult({ ok: true, message: j.enabled ? t('push.digest.saved', { t: j.time }) : t('push.digest.off') })
         } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
-        setBusy('')
+        finally { setBusy('') }
       }
 
       // Only a real report proves the long, multi-chunk path works (/test-push
@@ -837,7 +851,7 @@ window.__ModuleLoader__.load({
             ? { ok: true, message: t('push.digest.testOk', { d: j.date || '', n: j.chunks || 1 }) }
             : { ok: false, message: j.code === 'not-found' ? t('push.digest.stale') : (j.message || j.error || ''), hint: j.hint || '' })
         } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
-        setBusy('')
+        finally { setBusy('') }
       }
 
       // The host derives the digest defaults from config and keeps its own run
@@ -885,7 +899,7 @@ window.__ModuleLoader__.load({
           setResult({ ok: true, message: t('push.disabled') })
           resyncDigest()
         } catch (e) { setResult({ ok: false, message: String(e?.message || e) }) }
-        setBusy('')
+        finally { setBusy('') }
       }
 
       // The push block sits below the fold; the top banner scrolls to it.
