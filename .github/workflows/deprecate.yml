@@ -1,0 +1,37 @@
+name: Deprecate stale version
+
+# One-off maintenance: mark the 2026-11-13 staging publish as deprecated so an
+# exact install says why it should not be used. Kept out of release.yml on
+# purpose — it has nothing to do with shipping a tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: 'Package spec to deprecate'
+        required: true
+        default: 'dsh-aihot-radar@0.0.0-stage'
+      message:
+        description: 'Deprecation message'
+        required: true
+        default: 'staging build; use 0.4.0'
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Deprecate
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm whoami
+          npm deprecate "${{ inputs.spec }}" "${{ inputs.message }}"
+          npm view "${{ inputs.spec }}" deprecated
