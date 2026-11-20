@@ -627,6 +627,71 @@ await atest('N9 api timeout covers the body read, not only the headers', async (
   assert.ok(ms < 3000, 'aborted by the timeout instead of hanging: ' + ms + 'ms')
 })
 
+await atest('N13 the cache window follows s-maxage, and a hint-free response clears it', async () => {
+  // Scripted responses, one per request, so each case below is about one header set.
+  const responses = []
+  const inm = [] // what If-None-Match each request carried
+  const srv = http.createServer((req, res) => {
+    inm.push(req.headers['if-none-match'] ?? null)
+    const next = responses.shift() || {}
+    res.writeHead(next.status || 200, next.headers || {})
+    res.end(next.body ?? '{"events":[]}')
+  })
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const api = createApi({ baseUrl: 'http://127.0.0.1:' + srv.address().port, timeoutMs: 1000 })
+  const path = '/api/v1/codex-resets/recent'
+  assert.equal(api.cacheMaxAgeMs(path), 0, 'no hint before the first response')
+
+  // AIHOT sends both: s-maxage is the shared window and wins.
+  responses.push({ headers: { 'Content-Type': 'application/json', ETag: '"v1"', 'Cache-Control': 'public, max-age=60, s-maxage=600' } })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 600000, 's-maxage is read first')
+  assert.equal(inm[0], null, 'nothing to revalidate yet')
+
+  // max-age is the fallback when s-maxage is absent…
+  responses.push({ headers: { 'Content-Type': 'application/json', ETag: '"v2"', 'Cache-Control': 'public, max-age=42' } })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 42000, 'falls back to max-age')
+  assert.equal(inm[1], '"v1"', 'the previous ETag is revalidated')
+
+  // …and the window is recorded even when there is no ETag to cache.
+  responses.push({ headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=90' } })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 90000, 'no ETag still records the window')
+
+  // An explicit 0 on a 304 is information: the cached copy is no longer fresh.
+  responses.push({ status: 304, headers: { 'Cache-Control': 'public, max-age=0' }, body: '' })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 0, 'an explicit zero overwrites the old value')
+
+  // A 304 without any cache header means "unchanged", not "zero".
+  responses.push({ status: 304, headers: { 'Cache-Control': 'public, s-maxage=900' }, body: '' })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 900000)
+  responses.push({ status: 304, body: '' })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 900000, 'a missing header keeps the previous value')
+
+  // no-cache on a 304 is explicit too: drop the window instead of keeping it.
+  responses.push({ status: 304, headers: { 'Cache-Control': 'no-cache' }, body: '' })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 0, 'no-cache clears the remembered window')
+
+  // A 200 that is neither revalidatable nor timed drops the whole entry: the old
+  // window must not survive, and the dead ETag must not be sent again.
+  responses.push({ headers: { 'Content-Type': 'application/json', ETag: '"v3"', 'Cache-Control': 'public, max-age=120' } })
+  await api.resetsRecent('codex')
+  assert.equal(api.cacheMaxAgeMs(path), 120000)
+  responses.push({ headers: { 'Content-Type': 'application/json' } }) // no ETag, no Cache-Control
+  await api.resetsRecent('codex')
+  assert.equal(inm[8], '"v3"', 'the last entry was still conditional')
+  assert.equal(api.cacheMaxAgeMs(path), 0, 'a hint-free 200 clears the window')
+  responses.push({ headers: { 'Content-Type': 'application/json' } })
+  await api.resetsRecent('codex')
+  assert.equal(inm[9], null, 'and the dropped ETag is not sent again')
+  await shutdown(srv)
+})
+
 await atest('N10 a truncated digest still carries the full-text link', async () => {
   const url = 'https://aihot.news/daily/2026-11-16'
   const report = { date: '2026-11-16', lead: { title: 'T', leadParagraph: '长'.repeat(4000) }, sections: [], links: { aihot: url } }
@@ -944,9 +1009,9 @@ await atest('B7 a consumed baseline cannot be restored by an instance holding it
 
 await atest('B3 the bridge flags the first configuration only', async () => {
   const state = { webhook: { channel: 'none', url: '', secret: '' }, baselineConfirmed: null }
-  const stop = bridge(17425, state, { save: () => true })
+  const stop = bridge(17435, state, { save: () => true })
   await wait()
-  const post = (b) => fetch('http://127.0.0.1:17425/webhook', {
+  const post = (b) => fetch('http://127.0.0.1:17435/webhook', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
   }).then((r) => r.json())
   assert.equal((await post({ channel: 'bark', url: 'https://api.day.app/k' })).ok, true)
@@ -973,18 +1038,38 @@ await atest('K1 effectiveNotify: a stored off suppresses, a stored on adds nothi
     'a stored on must not beat the profile\'s explicit off')
 })
 
+await atest('B8 a bridge restarted on the same port answers from the new instance', async () => {
+  // Node 18 keeps kept-alive sockets alive after server.close(), so a pooled
+  // connection would still be served by the stopped instance — a reloaded bridge
+  // would then report the previous webhook/digest state.
+  const first = { webhook: { channel: 'none', url: '', secret: '' } }
+  const stopFirst = bridge(17439, first)
+  await wait()
+  assert.equal((await (await fetch('http://127.0.0.1:17439/status')).json()).configured, false)
+  stopFirst()
+
+  const second = { webhook: { channel: 'wecom', url: 'https://x', secret: '' } }
+  const stopSecond = bridge(17439, second)
+  try {
+    await wait()
+    const st = await (await fetch('http://127.0.0.1:17439/status')).json()
+    assert.equal(st.configured, true, 'the new instance answers, not the stopped one')
+    assert.equal(st.channel, 'wecom')
+  } finally { stopSecond() }
+})
+
 await atest('K2 /notify can only suppress a custom line; /status reports the truth', async () => {
   const state = { webhook: { channel: 'wecom', url: 'https://x', secret: '' }, notify: { signature: null } }
   let saves = 0
-  const stop = bridge(17426, state, {
+  const stop = bridge(17436, state, {
     config: { notify: { signatureText: 'via 值班群' } },
     save: () => { saves++; return true },
   })
   await wait()
-  const post = (b) => fetch('http://127.0.0.1:17426/notify', {
+  const post = (b) => fetch('http://127.0.0.1:17436/notify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
   }).then((r) => r.json())
-  const status = () => fetch('http://127.0.0.1:17426/status').then((r) => r.json())
+  const status = () => fetch('http://127.0.0.1:17436/status').then((r) => r.json())
 
   assert.equal((await status()).signature, true, 'the configured custom line is what decides')
   const off = await post({ signature: false })
@@ -999,16 +1084,42 @@ await atest('K2 /notify can only suppress a custom line; /status reports the tru
   stop()
 })
 
+await atest('K4 saving a webhook never fires the digest', async () => {
+  const state = {
+    webhook: { channel: 'none', url: '', secret: '' },
+    notify: { signature: null }, digest: {}, digestPref: {},
+  }
+  const calls = { tick: 0, reschedule: 0 }
+  const stop = startLocalApi({
+    port: 17438, state, notifier: createNotifier(),
+    config: { radar: {}, digest: {} }, save: () => true,
+    digestCtl: () => ({
+      tick: () => { calls.tick++ },
+      reschedule: () => { calls.reschedule++ },
+      nextRunAt: () => null,
+    }),
+  })
+  await wait()
+  const res = await fetch('http://127.0.0.1:17438/webhook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel: 'wecom', url: 'https://x', secret: '' }),
+  }).then((r) => r.json())
+  assert.equal(res.ok, true)
+  assert.equal(calls.tick, 0, 'configuring a channel must not push a digest')
+  assert.equal(calls.reschedule, 0, 'nor move the next scheduled run')
+  stop()
+})
+
 await atest('K3 a profile custom line is honoured until a stored off overrides it', async () => {
   const state = { webhook: { channel: 'wecom', url: 'https://x', secret: '' }, notify: { signature: null } }
   const stop = startLocalApi({
-    port: 17427, state, notifier: createNotifier(),
+    port: 17437, state, notifier: createNotifier(),
     config: { radar: {}, digest: {}, notify: { signatureText: 'via ACME' } }, save: () => true,
   })
   await wait()
-  const status = () => fetch('http://127.0.0.1:17427/status').then((r) => r.json())
+  const status = () => fetch('http://127.0.0.1:17437/status').then((r) => r.json())
   assert.equal((await status()).signature, true, 'a profile custom line shows as on')
-  const off = await fetch('http://127.0.0.1:17427/notify', {
+  const off = await fetch('http://127.0.0.1:17437/notify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature: false }),
   }).then((r) => r.json())
   assert.equal(off.signature, false, 'a stored off beats the profile text')
@@ -1269,6 +1380,72 @@ await atest('R13 digest: a stale footer record adds nothing, a custom footer sur
   })
 })
 
+await atest('R14 a digest with no channel is archived, not marked delivered', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async (home) => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    let asked = 0
+    const notifier = {
+      send: async () => { asked++; return { ok: false, skipped: true, error: '未配置推送通道', chunks: 0 } },
+    }
+    const state = { webhook: { channel: 'none', url: '', secret: '' }, digest: {} }
+    const r = await runDigest(api, state, notifier)
+    assert.equal(r.noChannel, true)
+    assert.equal(asked, 1, 'the notifier is asked once and declines')
+    assert.equal(state.digest.lastDate, undefined, 'nothing was delivered, so the period stays pending')
+    assert.equal(state.digest.archived.date, '2026-11-19', 'the local archive is recorded on its own key')
+    assert.ok(existsSync(join(home, 'aihot-radar', 'digest', '2026-11-19.md')), 'and the file really is on disk')
+
+    // Configure the bot afterwards: the period is still deliverable, not skipped.
+    state.webhook = { channel: 'wecom', url: 'https://x', secret: '' }
+    let delivered = 0
+    const real = {
+      send: async () => { delivered++; return { ok: true, chunks: 1, total: 1, delivered: [0], failed: [] } },
+    }
+    const r2 = await runDigest(api, state, real)
+    assert.equal(r2.ok, true)
+    assert.equal(delivered, 1, 'the archived-only period goes out once a channel exists')
+    assert.equal(state.digest.lastDate, '2026-11-19')
+  })
+})
+
+await atest('R16 a failed archive is a failure, not a "delivered" or "archived" claim', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async (home) => {
+    // A plain file where the archive directory must go makes mkdirSync fail.
+    mkdirSync(join(home, 'aihot-radar'), { recursive: true })
+    writeFileSync(join(home, 'aihot-radar', 'digest'), 'not a directory', 'utf8')
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    const notifier = { send: async () => ({ ok: false, skipped: true, error: 'no webhook configured', chunks: 0 }) }
+    const state = { webhook: { channel: 'none', url: '', secret: '' }, digest: {} }
+    const warns = []
+    const r = await runDigest(api, state, notifier, {}, {
+      warn: (m) => warns.push(m), info: () => {}, debug: () => {}, error: () => {},
+    })
+    assert.equal(r.archived, false, 'the write really failed')
+    assert.equal(r.noChannel, true)
+    assert.equal(state.digest.lastDate, undefined, 'nothing was delivered')
+    assert.equal(state.digest.archived, undefined, 'and nothing claims an archive that does not exist')
+    assert.ok(warns.some((m) => /归档失败/.test(m)), warns.join(' | '))
+  })
+})
+
+await atest('R15 the poll cycle reports the largest upstream cache window as a floor', async () => {
+  await withTempHome(async () => {
+    const { loadState } = await import('../lib/state.js')
+    const { scanCycle } = await import('../lib/radar.js')
+    const state = loadState()
+    state.webhook = { channel: 'none', url: '', secret: '' }
+    const api = {
+      PROVIDERS: ['codex', 'claude'],
+      resetsRecent: async () => ({ events: [] }),
+      cacheMaxAgeMs: (p) => (p.includes('claude') ? 900000 : 120000),
+    }
+    const out = await scanCycle({ api, state, notifier: { send: async () => ({ ok: true }) } })
+    assert.equal(out.minDelayMs, 900000, 'the slowest document decides the next interval')
+  })
+})
+
 await atest('R9 digest titles carry the same brand prefix as reset cards', async () => {
   const { runDigest } = await import('../lib/digest.js')
   await withTempHome(async () => {
@@ -1410,7 +1587,8 @@ await atest('R6 radar retry-then-success: a stale panel save cannot revive the r
 
 // ---- T: the whole digest schedule, not just the classifier. Each case drives
 // ---- real ticks through startDigest (lock + merge + dedupe + send + save).
-const digestHarness = async (send) => {
+const NOOP_LOG = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }
+const digestHarness = async (send, logger = NOOP_LOG) => {
   const { startDigest } = await import('../lib/digest.js')
   const { loadState, saveState } = await import('../lib/state.js')
   const state = loadState()
@@ -1423,7 +1601,7 @@ const digestHarness = async (send) => {
     notifier: { send },
     config: { digest: { enabled: true, time: '08:30', timezone: 'Asia/Shanghai' } },
     save: (s) => saveState(s, undefined, { own: ['digest'] }),
-    logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+    logger,
   })
   return { ctl, state, today }
 }
@@ -1524,9 +1702,10 @@ test('C4 the default provider list covers every provider', () => {
   const { cfgRadar } = configDefaults()
   assert.deepEqual([...cfgRadar.providers].sort(), [...PROVIDERS].sort(), 'a provider missing from the default is never scanned')
 })
-test('C5 default pollSeconds sits inside the schema window', () => {
+test('C5 the default poll interval follows the upstream guidance', () => {
   const { cfgRadar } = configDefaults()
   assert.ok(Number.isInteger(cfgRadar.pollSeconds) && cfgRadar.pollSeconds >= 60 && cfgRadar.pollSeconds <= 3600, 'the schema would silently clamp an out-of-range default')
+  assert.equal(cfgRadar.pollSeconds, 600, 'AIHOT asks for at most one request per 10 minutes on the reset endpoints')
 })
 test('C6 the default quiet window mutes nothing', () => {
   const { cfgRadar, cfgDigest } = configDefaults()
@@ -1560,6 +1739,121 @@ await atest('T4 a partial that cannot be resumed is not retried on a timer', asy
       h.ctl.reschedule()
       await h.ctl.tick()
       assert.equal(calls, 0, 'later ticks and a reschedule do not walk into the same wall')
+    } finally { h.ctl.stop() }
+  })
+})
+
+await atest('T5 a digest that could not be sent stays pending until a channel exists', async () => {
+  await withTempHome(async () => {
+    const { saveState } = await import('../lib/state.js')
+    let calls = 0
+    let delivered = false
+    const h = await digestHarness(async () => {
+      calls++
+      return delivered
+        ? { ok: true, chunks: 1, total: 1, delivered: [0], failed: [] }
+        : { ok: false, skipped: true, error: '未配置推送通道', chunks: 0 }
+    })
+    h.state.webhook = { channel: 'none', url: '', secret: '' }
+    try {
+      await h.ctl.tick()
+      assert.equal(calls, 1)
+      assert.equal(h.state.digest.lastDate, null, 'the panel must not claim a delivery that never happened')
+      assert.equal(h.state.digest.archived.date, h.today, 'the archive is recorded on its own key')
+
+      // The user configures the bot later in the day (and the state file learns it).
+      h.state.webhook = { channel: 'wecom', url: 'https://x', secret: '' }
+      saveState(h.state, undefined, { own: ['webhook'] })
+      delivered = true
+      await h.ctl.tick()
+      assert.equal(h.state.digest.lastDate, h.today, 'the same period is still delivered afterwards')
+    } finally { h.ctl.stop() }
+  })
+})
+
+// ---- W: the deprecate workflow validates the whole input, not one line of it --
+test('W1 the workflow takes the spec from env and validates it as one full SemVer', () => {
+  const yml = readFileSync(join(here, '..', '.github', 'workflows', 'deprecate.yml'), 'utf8')
+  assert.ok(/SPEC: \$\{\{ inputs\.spec \}\}/.test(yml), 'the spec must arrive as an env var, not as script text')
+  assert.ok(/MESSAGE: \$\{\{ inputs\.message \}\}/.test(yml), 'same for the message')
+  const script = yml.slice(yml.indexOf('run: |'))
+  assert.ok(script.length > 0, 'the workflow must keep its script step')
+  assert.ok(!/\$\{\{\s*inputs\./.test(script), 'no input may be interpolated into the script body')
+  // grep matches line by line, so "junk<newline>dsh-aihot-radar@1.2.3" would pass.
+  assert.ok(!/\$SPEC[^\n]*grep/.test(yml), 'grep cannot validate the spec as a whole')
+  assert.ok(/\[\[ "\$SPEC" == \*\$'\\n'\*/.test(yml), 'a multi-line value must be rejected outright')
+
+  // Rebuild the shell's own pattern from the file and decide real versions with it,
+  // so the rule that runs in CI is the one under test.
+  const shellVar = (name) => {
+    const m = new RegExp(`^\\s*${name}=(['"])(.*)\\1$`, 'm').exec(yml)
+    return m ? m[2] : null
+  }
+  const parts = { NUM: shellVar('NUM'), IDENT: shellVar('IDENT'), CORE: shellVar('CORE'), PRE: shellVar('PRE'), BUILD: shellVar('BUILD') }
+  for (const [k, v] of Object.entries(parts)) assert.ok(v, `${k} must stay a shell variable`)
+  const expand = (s) => {
+    let out = s
+    for (let i = 0; i < 5 && /\$\{/.test(out); i++) {
+      out = out.replace(/\$\{(NUM|IDENT|CORE|PRE|BUILD)\}/g, (_, n) => parts[n])
+    }
+    return out
+  }
+  assert.ok(/\[\[ ! "\$SPEC" =~ \^dsh-aihot-radar@\$\{CORE\}\$\{PRE\}\$\{BUILD\}\$ \]\]/.test(yml),
+    'the anchored pattern must be matched against the whole value')
+  const re = new RegExp(expand('^dsh-aihot-radar@${CORE}${PRE}${BUILD}$'))
+
+  for (const good of [
+    'dsh-aihot-radar@0.4.0',
+    'dsh-aihot-radar@0.0.0-stage',
+    'dsh-aihot-radar@1.2.3-rc.1',
+    'dsh-aihot-radar@1.2.3-alpha.beta-2',
+    'dsh-aihot-radar@1.2.3+build.7',
+  ]) assert.ok(re.test(good), `should allow ${good}`)
+
+  for (const bad of [
+    'dsh-aihot-radar@0.4.1-rc..1',   // empty prerelease identifier
+    'dsh-aihot-radar@01.2.3',        // leading zero in a numeric identifier
+    'dsh-aihot-radar@1.2.3-rc.01',   // leading zero in a prerelease number
+    'dsh-aihot-radar@1.2',           // not a full version
+    'dsh-aihot-radar@1.2.3-',        // empty prerelease
+    'dsh-aihot-radar@1.2.3+',        // empty build metadata
+    'dsh-aihot-radar@1.2.3.4',
+    'dsh-aihot-radar@>=0.0.0',       // a range is not a version
+    '@scope/pkg@1.0.0',              // not this package
+    'junk\ndsh-aihot-radar@1.2.3',
+    'dsh-aihot-radar@1.2.3\njunk',
+    'dsh-aihot-radar@1.2.3\n',
+  ]) assert.ok(!re.test(bad), `should reject ${JSON.stringify(bad)}`)
+})
+
+await atest('T6 no channel: the log states whether the archive happened', async () => {
+  const send = async () => ({ ok: false, skipped: true, error: 'no webhook configured', chunks: 0 })
+  // Writable home: archived and unsent.
+  await withTempHome(async () => {
+    const lines = []
+    const log = { debug: () => {}, info: (m) => lines.push(m), warn: (m) => lines.push(m), error: (m) => lines.push(m) }
+    const h = await digestHarness(send, log)
+    h.state.webhook = { channel: 'none', url: '', secret: '' }
+    try {
+      await h.ctl.tick()
+      assert.equal(h.state.digest.lastDate, null)
+      assert.ok(lines.some((m) => /已归档到本地，未推送/.test(m)), lines.join(' | '))
+      assert.ok(!lines.some((m) => /归档失败/.test(m)), 'a good archive is not reported as failed')
+    } finally { h.ctl.stop() }
+  })
+  // Broken archive path: the same run must not claim an archive.
+  await withTempHome(async (home) => {
+    mkdirSync(join(home, 'aihot-radar'), { recursive: true })
+    writeFileSync(join(home, 'aihot-radar', 'digest'), 'not a directory', 'utf8')
+    const lines = []
+    const log = { debug: () => {}, info: (m) => lines.push(m), warn: (m) => lines.push(m), error: (m) => lines.push(m) }
+    const h = await digestHarness(send, log)
+    h.state.webhook = { channel: 'none', url: '', secret: '' }
+    try {
+      await h.ctl.tick()
+      assert.equal(h.state.digest.lastDate, null)
+      assert.ok(lines.some((m) => /归档失败，未推送/.test(m)), lines.join(' | '))
+      assert.ok(!lines.some((m) => /已归档到本地，未推送/.test(m)), 'must not claim an archive that failed')
     } finally { h.ctl.stop() }
   })
 })

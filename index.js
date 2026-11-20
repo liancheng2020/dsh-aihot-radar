@@ -20,7 +20,9 @@ export const inject = ['tools']
 const DEFAULT_RADAR = {
   enabled: true,
   providers: [...PROVIDERS],
-  pollSeconds: 120,
+  // AIHOT's reset endpoints ask for at most one request per 10 minutes; polling
+  // faster only re-reads the same cached document.
+  pollSeconds: 600,
   notifyAnnounced: true,
   notifyConfirmed: true,
   muted: [],

@@ -29,9 +29,51 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Deprecate
+        # The inputs arrive as environment variables and never as script text: a
+        # workflow_dispatch input is free-form text typed into the UI, and this step
+        # runs with a registry token. Interpolating it into `run:` would let a
+        # backtick or $(...) in the box execute here.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          SPEC: ${{ inputs.spec }}
+          MESSAGE: ${{ inputs.message }}
         run: |
+          set -euo pipefail
+
+          # Validate the WHOLE input, not line by line: piping into grep would accept
+          # "junk<newline>dsh-aihot-radar@1.2.3" because one line matches. [[ =~ ]]
+          # tests the value as one string, and the newline check below makes a
+          # multi-line box fail loudly instead of silently using its first match.
+          if [[ "$SPEC" == *$'\n'* || "$SPEC" == *$'\r'* ]]; then
+            echo "::error::spec must be a single line: dsh-aihot-radar@<version>"
+            exit 1
+          fi
+          # Only this package, only one concrete version. The version is checked as
+          # full SemVer 2.0.0 rather than "digits and dots": numeric identifiers carry
+          # no leading zeros (01.2.3 is out), prerelease identifiers are dot-separated
+          # and non-empty (0.4.1-rc..1 is out), and build metadata may follow '+'.
+          # A range (">=0.0.0") or another name would deprecate releases nobody asked
+          # about, so anything that does not match stops here.
+          NUM='(0|[1-9][0-9]*)'
+          IDENT='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          CORE="${NUM}\.${NUM}\.${NUM}"
+          PRE="(-(${IDENT}(\.${IDENT})*))?"
+          BUILD="([+]([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?"
+          if [[ ! "$SPEC" =~ ^dsh-aihot-radar@${CORE}${PRE}${BUILD}$ ]]; then
+            echo "::error::spec must be dsh-aihot-radar@<semver>, e.g. dsh-aihot-radar@1.2.3 or dsh-aihot-radar@1.2.3-rc.1"
+            exit 1
+          fi
+
+          # A message is required, bounded, and must have visible characters.
+          if [ "$(printf '%s' "$MESSAGE" | tr -d '[:space:]')" = "" ]; then
+            echo "::error::message must not be empty"
+            exit 1
+          fi
+          if [ "${#MESSAGE}" -gt 500 ]; then
+            echo "::error::message must be 500 characters or fewer"
+            exit 1
+          fi
+
           npm whoami
-          npm deprecate "${{ inputs.spec }}" "${{ inputs.message }}"
-          npm view "${{ inputs.spec }}" deprecated
+          npm deprecate "$SPEC" "$MESSAGE"
+          npm view "$SPEC" deprecated

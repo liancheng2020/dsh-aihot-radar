@@ -73,7 +73,7 @@ Restart DSH. The **AIHOT Radar** panel is ready.
     radar:
       enabled: true                           # false stops background pushes; tools and panel still work
       providers: [codex, claude, antigravity]
-      pollSeconds: 120                        # min 60
+      pollSeconds: 600                        # min 60; AIHOT asks for at most one request per 10 min (the default)
       quiet: { start: "", end: "" }           # quiet hours, e.g. "23:00"–"08:00"; empty = off
       muted: []                               # per-source mute, e.g. [antigravity]
     digest:

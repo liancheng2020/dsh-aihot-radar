@@ -73,7 +73,7 @@ dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/re
     radar:
       enabled: true                           # 关掉即停止后台推送，工具与面板仍可用
       providers: [codex, claude, antigravity]
-      pollSeconds: 120                        # 最小 60
+      pollSeconds: 600                        # 最小 60；AIHOT 建议 ≤10 分钟一次（默认即 10 分钟）
       quiet: { start: "", end: "" }           # 免打扰时段，如 "23:00"–"08:00"；空 = 关闭
       muted: []                               # 按来源静音，如 [antigravity]
     digest:
