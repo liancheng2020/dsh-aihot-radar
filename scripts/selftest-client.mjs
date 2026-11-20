@@ -99,11 +99,19 @@ let hostDigestTz = 'Asia/Shanghai'
 let statusFails = 0
 let webhookErr = false
 let digestErr = false
+let hostSignature = false
+const sigCalls = []
 const fetchMock = async (url, init) => {
   const u = String(url)
   if (u.startsWith('http://127.0.0.1:17420/status')) {
     if (statusFails > 0) { statusFails--; throw new Error('ECONNREFUSED') }
-    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: hostDigestState, radar: { quiet: { start: '', end: '' }, muted: [] }, ...(hostDigestCfg ? { digestCfg: { enabled: false, time: '08:30', timezone: hostDigestTz, nextRunAt: Date.now() + 3600000 } } : {}) }) }
+    return { ok: true, status: 200, json: async () => ({ channel: hostConfigured ? 'wecom' : 'none', configured: hostConfigured, urlHost: hostConfigured ? 'qyapi.weixin.qq.com' : '', lastResult: {}, lastCheck: {}, digest: hostDigestState, radar: { quiet: { start: '', end: '' }, muted: [] }, signature: hostSignature, ...(hostDigestCfg ? { digestCfg: { enabled: false, time: '08:30', timezone: hostDigestTz, nextRunAt: Date.now() + 3600000 } } : {}) }) }
+  }
+  if (u.startsWith('http://127.0.0.1:17420/notify')) {
+    const body = JSON.parse(init?.body || '{}')
+    sigCalls.push(body)
+    if (body.signature === true || body.signature === false) hostSignature = body.signature
+    return { ok: true, status: 200, json: async () => ({ ok: true, signature: hostSignature }) }
   }
   if (u.startsWith('http://127.0.0.1:17420/webhook')) {
     // Host-side rejection (200 + ok:false), the path that used to leave busy set.
@@ -157,6 +165,18 @@ const fnSrc = clientCode.match(/function addDays\(dateStr, n\) \{[\s\S]*?\n    \
 const addDays = new Function('dateStr', 'n', fnSrc.replace(/^function addDays\(dateStr, n\) \{/, '').replace(/\}$/, ''))
 check('A5 addDays(-1) UTC-safe', addDays('2026-11-12', -1) === '2026-11-11')
 check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
+
+// ---- button interaction states (stylesheet is injected, so assert the source) ----
+check('S6 悬停不改边框色，焦点环只在键盘时出现',
+  clientCode.includes('.aihot-btn:hover:not(:disabled) { border-color: ${T.border}')
+  && clientCode.includes('.aihot-btn:focus-visible')
+  && clientCode.includes('.aihot-btn:focus { outline: none')
+  && !/\.aihot-btn:hover\s*\{[^}]*border-color:\s*\$\{T\.brand\}/.test(clientCode))
+check('S7 动作行两个按钮任何指针状态都保持原样（含宿主 !important 覆盖）',
+  clientCode.includes('.aihot-btn-flat:hover,')
+  && clientCode.includes('outline: none !important')
+  && clientCode.includes('box-shadow: none !important')
+  && clientCode.includes('background: ${T.layer1} !important'))
 
 // ---- zh radar tab ----
 {
@@ -212,9 +232,10 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
       && n.children.filter((c) => c && c.type === 'button').length === 2 && n.children.includes(chTest))
     const chLabels = chRow ? chRow.children.filter((c) => c && c.type === 'button').map(textOf) : []
     check('P17 通道卡动作行: 测试在前、修改（提交位）在后', chLabels[0] === '发送测试推送' && chLabels[1] === '修改')
-    check('P17 修改是描边按钮（有边框、无填充）',
-      findButton(tree, '修改').props.style.background === 'transparent'
-      && /border-l2/.test(String(findButton(tree, '修改').props.style.border)))
+    check('P17 修改与测试按钮同款（样式与类名都一致，悬停也不变色）',
+      JSON.stringify(findButton(tree, '修改').props.style) === JSON.stringify(chTest.props.style)
+      && findButton(tree, '修改').props.className === chTest.props.className
+      && /aihot-btn-flat/.test(String(findButton(tree, '修改').props.className)))
   }
   check('P2 反馈入口链接', html.includes('反馈/报障'))
   const tpBtn = findButton(tree, '发送测试推送')
@@ -279,9 +300,12 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   findById(treeD, 'aihot-digest-on').props.onChange({ target: { checked: false } })
   treeD = await render()
   check('P15 关闭定时后时间仍可编辑', findById(treeD, 'aihot-digest-time').props.disabled !== true)
+  // Scoped to the digest description on purpose: the footer switch legitimately
+  // says 默认关闭 elsewhere on the card, so a page-wide ban would be wrong.
+  const digestDesc = [...walk(treeD)].find((n) => n.text != null && n.text.includes('到点把当天'))
   check('P15 关闭态改为徽章+说明，不再写在副标题里',
     stringify(treeD).includes('未启用') && stringify(treeD).includes('已关闭定时推送')
-    && !stringify(treeD).includes('默认关闭'))
+    && !!digestDesc && !digestDesc.text.includes('默认关闭'))
   findById(treeD, 'aihot-digest-on').props.onChange({ target: { checked: true } })
   treeD = await render()
 
@@ -478,6 +502,46 @@ check('A5 addDays(+1) UTC-safe', addDays('2026-11-12', 1) === '2026-11-13')
   await sleep(80)
   tree = await render()
   check('P23 日报改后重试成功', stringify(tree).includes('日报已改为每天 08:30 推送'))
+  dispose()
+}
+
+// ---- K: the install-link footer switch is gone (no built-in promo line) ----
+{
+  hostConfigured = true
+  hostSignature = false
+  sigCalls.length = 0
+  const { render, dispose } = await loadPanel('zh')
+  let tree = await render()
+  // The summary used to carry the footer checkbox; with the built-in line removed
+  // there is nothing left for it to switch, so it must be gone in both states.
+  check('K0 摘要卡不再有尾注开关，也不再写「附上安装链接」',
+    !findById(tree, 'aihot-sig') && !stringify(tree).includes('附上安装链接')
+    && !findButton(tree, '保存并发送测试'))
+  // Same plain frame as its neighbour: 修改 only opens the editor, so it must not
+  // be dressed up as a primary/secondary pair with the test button.
+  const editBtn = findButton(tree, '修改')
+  check('K0 修改按钮与测试按钮同款样式（无描边变体）',
+    !!editBtn && JSON.stringify(editBtn.props.style) === JSON.stringify(findButton(tree, '发送测试推送').props.style)
+    && editBtn.props.style.background !== 'transparent')
+
+  findButton(tree, '修改').props.onClick()
+  tree = await render()
+  check('K1 编辑页也没有尾注开关，且这一屏不会再请求 /notify',
+    !findById(tree, 'aihot-sig') && !stringify(tree).includes('附上安装链接')
+    && sigCalls.length === 0 && !!findButton(tree, '保存并发送测试'))
+  dispose()
+}
+
+{
+  hostConfigured = true
+  const { render, dispose } = await loadPanel('en')
+  let tree = await render()
+  check('K1 en: 摘要里没有安装链接开关',
+    !findById(tree, 'aihot-sig') && !stringify(tree).includes('Append the install link'))
+  findButton(tree, 'Edit').props.onClick()
+  tree = await render()
+  check('K1 en: 编辑页也没有该开关',
+    !findById(tree, 'aihot-sig') && !stringify(tree).includes('Append the install link'))
   dispose()
 }
 

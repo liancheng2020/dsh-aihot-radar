@@ -8,7 +8,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createApi, PROVIDERS } from './lib/api.js'
 import { loadState, saveState } from './lib/state.js'
-import { createNotifier } from './lib/notify.js'
+import { createNotifier, signatureEnabled, effectiveNotify } from './lib/notify.js'
 import { registerTools } from './lib/tools.js'
 import { startRadar } from './lib/radar.js'
 import { startDigest } from './lib/digest.js'
@@ -27,7 +27,15 @@ const DEFAULT_RADAR = {
   quiet: { start: '', end: '' },
 }
 const DEFAULT_DIGEST = { enabled: false, time: '08:30', timezone: 'Asia/Shanghai', catchUp: false }
-const DEFAULT_NOTIFY = { signature: true, signatureText: '' }
+// The footer is opt-in and always the user's own text: there is no built-in
+// promotional line to append. `signatureText` is what turns it on, `signature:
+// false` is the only value of the old switch that still does anything (it
+// suppresses that text). The brand stays in the card title either way.
+// No `signature` default: an omitted switch has to stay unknown (undefined) so a
+// custom signatureText can still turn the footer on. Defaulting it to false here
+// would silently ignore the custom line the user did write — the schema resolves
+// the default before notify.js ever sees "the key was left out".
+const DEFAULT_NOTIFY = { signatureText: '' }
 
 export const Config = z.object({
   radar: z.object({
@@ -51,7 +59,9 @@ export const Config = z.object({
     catchUp: z.boolean().default(DEFAULT_DIGEST.catchUp),
   }).default(DEFAULT_DIGEST),
   notify: z.object({
-    signature: z.boolean().default(DEFAULT_NOTIFY.signature),
+    // Intentionally no default — see DEFAULT_NOTIFY: `false` would beat
+    // signatureText and turn a written footer into a silent no-op.
+    signature: z.boolean(),
     signatureText: z.string().default(DEFAULT_NOTIFY.signatureText),
   }).default(DEFAULT_NOTIFY),
   localApi: z.object({
@@ -93,7 +103,9 @@ export function apply(ctx, config) {
       digest: state.digest || {},
       radar: { quiet: config.radar?.quiet || { start: '', end: '' }, muted: config.radar?.muted || [] },
       digestCfg: { timezone: config.digest?.timezone || 'Asia/Shanghai', time: config.digest?.time || '08:30' },
-      notify: { signature: config.notify?.signature !== false },
+      // What the sender will really append: the profile's own signatureText, minus
+      // any stored "off". There is no built-in line to report.
+      notify: { signature: signatureEnabled(effectiveNotify(config.notify, state)) },
     }, null, 2),
   }))
 
@@ -143,6 +155,9 @@ export function apply(ctx, config) {
 
   ctx.effect(() => startRadar({
     api: syncApi, state, notifier, config, onScan, logger: log,
+    // Used for the one write that is not tied to a provider's own scan: clearing
+    // the consumed configuration cutoff once a whole cycle came back clean.
+    save: (s) => saveState(s, log),
   }))
 
   // Held so the bridge can reschedule after the panel saves a new digest time.

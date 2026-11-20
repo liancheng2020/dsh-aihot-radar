@@ -274,9 +274,6 @@ window.__ModuleLoader__.load({
       live: { width: 7, height: 7, borderRadius: '50%', background: T.success, animation: 'aihot-pulse 2.4s infinite' },
       sub: { color: T.tertiary, fontSize: 12, margin: '3px 0 0' },
       btn: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.layer1, color: T.sub, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
-      // Outlined variant: same frame as css.btn, no fill. Used for the 修改 button
-      // so it reads as a button without competing with the filled actions.
-      btnOutline: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: 'transparent', color: T.sub, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
       btnPrimary: { fontSize: 12, padding: '6px 14px', borderRadius: 8, border: `1px solid ${tint(T.brand, 45)}`, background: tint(T.brand, 16), color: T.brand, fontWeight: 600, cursor: 'pointer', transition: 'all .15s ease', display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none' },
       field: { marginBottom: 9 },
       fieldLabel: { display: 'block', fontSize: 11.5, color: T.tertiary, marginBottom: 4 },
@@ -982,7 +979,7 @@ window.__ModuleLoader__.load({
         // (取消 → 关闭推送), then the conservative commit (仅保存), then the main
         // commit (保存并发送测试) last, at the right edge. Only committing actions
         // get btnPrimary, so order and visual weight stay two separate rules.
-        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 } },
           // Always offered, not just when a channel exists: on first run the panel
           // opens the form itself, and without this the only way out was to save
           // something. It discards the draft and goes back to the summary.
@@ -1009,21 +1006,20 @@ window.__ModuleLoader__.load({
         host.urlHost ? h('div', { style: css.metaDim }, t('push.current', { h: host.urlHost })) : null,
         h('div', { style: css.metaDim }, host.configured ? t('push.hint') : t('push.empty')),
         // Same rule as the form footer: 测试 (light, reversible) first, the
-        // action that commits (修改 / 配置推送) last, at the right edge.
-        // 修改 is an outlined (not filled) button: it only opens the editor, so
-        // it keeps the same frame as its neighbours without the filled body that
-        // made it read like the card's main action. When nothing is configured
-        // that slot opens the form, so it says 配置推送 rather than 仅保存 (there
-        // is nothing to save yet) and stays filled as the card's main action.
+        // action that commits (修改 / 配置推送) last, at the right edge. Both use
+        // the plain button frame — no outlined variant — so the row reads as two
+        // equal actions instead of a primary/secondary pair. When nothing is
+        // configured that slot opens the form, so it says 配置推送 rather than
+        // 仅保存 (there is nothing to save yet).
         h('div', { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
           h('button', {
-            type: 'button', disabled: !!busy || !host.configured, className: 'aihot-btn',
+            type: 'button', disabled: !!busy || !host.configured, className: 'aihot-btn aihot-btn-flat',
             style: busy || !host.configured ? { ...css.btn, opacity: 0.5, cursor: 'not-allowed' } : css.btn,
             onClick: testPush,
           }, busy === 'test' ? t('push.testing') : t('push.test')),
           h('button', {
-            type: 'button', disabled: !!busy, className: 'aihot-btn',
-            style: host.configured ? css.btnOutline : css.btn,
+            type: 'button', disabled: !!busy, className: 'aihot-btn aihot-btn-flat',
+            style: css.btn,
             onClick: openForm,
           }, host.configured ? t('push.edit') : t('push.setup'))))
 
@@ -1250,7 +1246,33 @@ window.__ModuleLoader__.load({
           .aihot-radar-panel::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 8px; }
           .aihot-radar-panel::-webkit-scrollbar-thumb:hover { background: ${T.tertiary}; }
           .aihot-card:hover { border-color: ${T.border}; background: ${T.layer2}; }
-          .aihot-btn:hover { border-color: ${T.brand}; color: ${T.text}; background: ${T.hover}; }
+          /* Quiet interaction states. The border is never recoloured on hover: a
+             recycled button node (form → summary re-render) can keep :hover after
+             the pointer has not moved, and a brand-coloured rule then draws a
+             bright ring around a plain action like 修改 — it reads as "still
+             selected". Focus gets the same treatment: we draw the ring ourselves
+             and only for keyboard focus, so a mouse click never leaves one. */
+          .aihot-btn:hover:not(:disabled) { border-color: ${T.border}; color: ${T.text}; background: ${T.hover}; box-shadow: none; }
+          .aihot-btn:focus { outline: none; box-shadow: none; }
+          .aihot-btn:focus-visible { outline: 1px solid ${tint(T.brand, 55)}; outline-offset: 1px; }
+          /* The action row is a pair of equal actions (测试 / 修改): hovering must
+             not make either one look selected, so this pair keeps its idle frame,
+             colour and fill in every pointer state. Host skins style their own
+             bare button hover/active states, and inline styles cannot outrank a
+             skin rule, so this one place opts out with !important — an inert row
+             is the point here. */
+          .aihot-btn-flat,
+          .aihot-btn-flat:hover,
+          .aihot-btn-flat:focus,
+          .aihot-btn-flat:focus-visible,
+          .aihot-btn-flat:active {
+            border-color: ${T.border} !important;
+            color: ${T.sub} !important;
+            background: ${T.layer1} !important;
+            box-shadow: none !important;
+            outline: none !important;
+            transform: none !important;
+          }
           .aihot-tool:hover { border-color: ${T.border}; background: ${T.layer2}; }
           .aihot-link:hover { opacity: 0.75; }
           .aihot-tab:hover { color: ${T.sub}; background: ${T.hover}; }

@@ -12,9 +12,9 @@
 A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset alerts** + **AI news agent tools** + **daily digest**.
 
 > **Three things first**
-> - **No API key, zero runtime dependencies**: pure JS, no Python/Go. Data comes from the public anonymous [AIHOT](https://aihot.news) API.
-> - **Restart DSH once** after install (bundle-layer composition); the **AIHOT Radar** panel is ready.
-> - For push alerts, open the panel's **Push settings** block, pick a channel, paste the URL and hit **Save and send test** — it applies immediately, no restart. Without it, the in-chat news tools and panel still work.
+> - **No API key, zero runtime dependencies**: pure JS, no Python/Go, no key to paste; data comes from the public anonymous [AIHOT](https://aihot.news) API.
+> - **Restart DSH once** after install and the **AIHOT Radar** panel is ready; push is optional — the news tools and panel work without it.
+> - To push, open **Push settings**, pick a channel, paste the URL and hit **Save and send test** (applies immediately). **Background alerts need DSH running**, and a successful test only proves the channel is reachable.
 
 **This is what you get after install** (left: quota radar · right: daily report; push settings below)
 
@@ -24,10 +24,10 @@ A DeepSeek Harness plugin: **real-time Codex / Claude / Antigravity quota-reset 
 
 ## What it does
 
-- **Quota radar (the hook)**: polls AIHOT reset monitors in the background and pushes to your webhook on new **announcements** or **confirmed** resets. Reset-card announcements include a predicted time window; confirmations include the source post. AIHOT-inferred states (window passed / likely completed) send a light notice marked "unconfirmed". A per-cycle push cap defers overflow to the next cycle, so no event is lost; definite failures retry next cycle (up to 5 attempts), while timeouts and dropped connections are recorded as **delivery uncertain** and never re-sent — one missed message beats a duplicate in a shared group.
-- **7 news tools**: ask "what happened in AI today", "search OpenAI", "did Claude quota reset?" — the agent calls `aihot_*` tools and answers from AIHOT's curated Chinese Markdown.
-- **Daily digest** (optional): fetches the AIHOT daily report from the **JSON API** at `digest.timezone` (Beijing by default), pushes and archives it locally; the panel can toggle it and change the time. Oversized payloads are split into multiple messages; failed pushes retry after 10 minutes, up to 3 times per day (a timeout does not use up a retry, and an edition that became delivery-uncertain is never re-sent).
-- **Panel**: live view of pending announcements, recent events, and the tool catalog, plus the push channel and daily-digest settings; also shows AIHOT's check time and monitor status (client-side fetch).
+- **Quota-reset alerts (core)**: polls AIHOT reset monitors in the background and pushes new **announcements** and **confirmed** resets to your webhook; AIHOT-inferred states are marked "unconfirmed". Configuring a channel for the first time silently skips the "confirmed" history, so the first card is a live event; failures retry up to 5 times, while a timeout is recorded as **delivery uncertain** and never re-sent — one missed message beats a duplicate in a shared group.
+- **7 news tools**: ask "what happened in AI today" or "did Claude quota reset?" — the agent calls `aihot_*` tools and answers from AIHOT's curated Chinese content.
+- **Daily digest** (optional): fetches the report at `digest.timezone` (Beijing by default), pushes and archives it locally; the panel toggles it and changes the time. Oversized payloads are split, and a retry sends **only the missing parts**; a timed-out part stops automatic resending for the day.
+- **Panel**: live pending announcements, recent events and the tool catalog, plus channel and digest settings, with AIHOT's check time and monitor status.
 
 ## Install
 
@@ -50,23 +50,21 @@ Restart DSH. The **AIHOT Radar** panel is ready.
 
 ## Configure push (optional)
 
-**Panel (recommended)**: **AIHOT Radar** → **Push settings** → pick a channel, paste the URL, hit **Save and send test**. Saving takes effect on the next push and needs **no restart**; a successful test means the whole path works.
+**Panel (recommended)**: **AIHOT Radar** → **Push settings** → pick a channel, paste the URL, hit **Save and send test**. Saving applies immediately, **no restart** needed.
 
-Below it sits the **Daily AI digest**: a switch plus a send time (half-hour presets, free typing allowed). Saving reschedules the host timer immediately; it is **off by default**. **Send test digest** runs a real report through the full multi-chunk path and never marks today as delivered.
+![Push settings panel: channel summary and the daily AI digest](assets/panel-push.png)
 
-![Push settings panel: channel summary (Feishu / configured / host) and the daily AI digest (switch, send time, timezone, next run, test and save)](assets/panel-push.png)
+- Data comes from **[AIHOT](https://aihot.news)**' public API; the plugin only curates and forwards it. Alerts are a **background job**: quitting DSH stops polling and pushing.
+- **A successful test only proves the channel is reachable** (URL, bot and permissions worked at that moment). It does not promise every later alert arrives — lost network, a removed bot or a closed DSH all leave the alert on your machine.
+- **Daily AI digest** lives in the same block: a switch plus a send time (half-hour presets, free typing allowed), **off by default**, rescheduled immediately on save. **Send test digest** runs a real report through the full multi-chunk path and never marks today as delivered.
 
-**Manual file**: edit `$DSH_HOME/aihot-radar/state.json` (default `~/.dsh/aihot-radar/state.json`), read automatically and never uploaded; restart DSH afterwards:
+**Channels**: `wecom` (bot URL) · `dingtalk` (URL + optional signing key) · `feishu` (URL) · `bark` (`https://api.day.app/<key>`) · `serverchan` (`https://sctapi.ftqq.com/<key>.send`) · `telegram` (url = bot token, secret = chat_id) · `generic` (any JSON POST) · `none` (default, off).
+
+**Manual config**: the channel goes in `$DSH_HOME/aihot-radar/state.json` (default `~/.dsh/aihot-radar/state.json`, **only touch `webhook`**; `seen`, `digest`, `delivery` are maintained by the plugin, and replacing the whole file loses dedup and digest progress). Everything else goes in the profile's `cordis.patch.yml`. Restart DSH afterwards.
 
 ```json
 { "webhook": { "channel": "wecom", "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx", "secret": "" } }
 ```
-
-> Only touch the `webhook` field; `seen`, `digest`, `digestPref` and `delivery` are maintained by the plugin — replacing the whole file loses dedup and digest progress.
-
-**Channels**: `wecom` (bot URL) · `dingtalk` (URL + optional signing key) · `feishu` (URL) · `bark` (`https://api.day.app/<key>`) · `serverchan` (`https://sctapi.ftqq.com/<key>.send`) · `telegram` (url = bot token, secret = chat_id) · `generic` (any JSON POST) · `none` (default, off).
-
-**Everything else** goes in the profile's `cordis.patch.yml` (non-sensitive tunables):
 
 ```yaml
 - id: aihot-radar
@@ -84,17 +82,16 @@ Below it sits the **Daily AI digest**: a switch plus a send time (half-hour pres
       timezone: Asia/Shanghai
       catchUp: false                          # push today's digest on startup if the time already passed
     notify:
-      signature: true                         # one-line attribution (on by default)
-      signatureText: ""                       # empty = built-in wording
+      signatureText: ""                       # your own footer line (the only thing that enables one); empty = none
+      # signature: false                      # uncomment to switch the footer above off for a while
 ```
 
-- `radar.notifyAnnounced` / `radar.notifyConfirmed` control announcement and confirmation pushes (both on by default). Quiet hours defer pushes instead of dropping them; muted sources are marked seen so unmuting won't replay old events; the digest edition follows AIHOT's `report.date`.
-- WeCom is split at ≤3900 bytes and Telegram at ≤3800 characters (line-aware, no UTF-8 splitting), and the response body's business code is validated — HTTP 200 with a business failure still counts as a failure. An HTML page, an empty body from a known platform, or a missing success field never counts as delivered.
-- **No duplicate pushes across instances**: when desktop and web share `DSH_HOME`, a state lock serialises read → dedupe → send → write, so each event and each digest edition goes out once. Failures and uncertain deliveries are kept in `state.json` under `delivery` and surfaced by `/status` and `aihot_radar_status`.
-- `notify.signature` appends a one-line attribution to reset cards, the digest and test pushes (the built-in wording is Chinese): in Feishu cards (`lark_md`) and WeCom / DingTalk / ServerChan (markdown) the install spec is a **tappable link**; Bark / Telegram / the Feishu text fallback keep the spec only, **without the URL**, on one clean line. Set `signatureText` to use your own, e.g. `via dsh-aihot-radar · install: github:liancheng2020/dsh-aihot-radar`, or `false` to drop the line.
-- A loopback-only bridge at `127.0.0.1:17420` powers the panel's save and test buttons — it returns only the host, never the url/secret, and rejects any non-local origin (the host shell's `dsh-app://` is allowed). Falls back to the `aihot_radar_status` tool with a classified failure reason; `localApi.enabled: false` disables it.
-- The digest switch follows an **explicit preference** (panel) or `digest.enabled` (config): a configured webhook never turns the digest on by itself, so upgrading does not add a daily message. The panel shows the last run (delivered date / failure reason) and the next run in `digest.timezone`, to the minute. If the host starts after that time, today's digest is skipped by default; `digest.catchUp: true` pushes it shortly after startup (same-day de-duplication still applies).
-- No pushes wanted? Set `radar.enabled: false` (news tools and panel keep working). To uninstall, remove the plugin row from the profile and restart DSH.
+- **Quiet hours / mute / kind switches**: quiet hours defer pushes instead of dropping them; muted sources are marked seen so unmuting won't replay old events. `radar.notifyAnnounced` and `radar.notifyConfirmed` are both on by default.
+- **Footer**: there is no built-in promotional footer (no install link). Only `notify.signatureText` appends a line and `signature: false` suppresses it; a stale checkbox record from an older panel no longer does anything. The brand always stays in the **title** (`AIHOT 雷达 · Codex ...`).
+- **Long content is split**: WeCom at ≤3900 bytes, Telegram at ≤3800 characters, line-aware and never breaking UTF-8, with the response body's business code validated — HTTP 200 with a business failure still counts as a failure.
+- **No duplicate pushes across instances**: when desktop and web share `DSH_HOME`, each event and each digest edition goes out once; failures and uncertain deliveries are kept in `state.json` under `delivery` and surfaced by `/status` and `aihot_radar_status`.
+- **The digest is never turned on by a configured webhook**; if the host starts after the send time, today's digest is skipped by default and `catchUp: true` pushes it once. The panel shows the last and next run.
+- **Bridge** binds `127.0.0.1:17420` only and never exposes the url/secret; `localApi.enabled: false` disables it. **No pushes wanted?** Set `radar.enabled: false` (news tools and panel keep working). **Uninstall**: remove the plugin row from the profile and restart DSH.
 
 ## Tools
 

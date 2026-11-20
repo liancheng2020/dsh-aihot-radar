@@ -3,6 +3,11 @@
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **移除内置推广尾注**：推送不再追加插件自己的安装链接，额度提醒、日报、测试推送三条链路一致。尾注只来自你自己写的 `notify.signatureText`；`notify.signature: true` 与旧面板的勾选记录都不再产生尾注，显式 `signature: false` 仍可关掉自定义文案。推送配置面板里已没有「附上安装链接」开关，中英文文案与 README 同步删除；通知标题继续保留「AIHOT 雷达」品牌。
+
 ## [0.4.0] - 2026-11-18
 
 ### Added

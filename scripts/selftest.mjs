@@ -5,13 +5,13 @@
 
 import assert from 'node:assert'
 import http from 'node:http'
-import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, existsSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { createNotifier, chunkContent, formatResetMessage, formatInferredMessage, withSignature, DEFAULT_SIGNATURE, toPlainText, toFeishuCard } from '../lib/notify.js'
+import { createNotifier, chunkContent, formatResetMessage, formatInferredMessage, withSignature, signatureEnabled, effectiveNotify, toPlainText, toFeishuCard } from '../lib/notify.js'
 import { scanProvider } from '../lib/radar.js'
-import { createApi } from '../lib/api.js'
+import { createApi, PROVIDERS } from '../lib/api.js'
 import { effectiveDigest, renderReportText, assertReportDate, runDigest } from '../lib/digest.js'
 import { validateTime, msUntilNext, isQuietNow, tzParts, resolveTz } from '../lib/time.js'
 import { startLocalApi } from '../lib/localapi.js'
@@ -136,7 +136,7 @@ await atest('A2 feishu sends a card; telegram flattened; wecom keeps markdown', 
     return { ok: true, status: 200, text: async () => JSON.stringify({ errcode: 0, code: 0, ok: true }) }
   }
   const n = createNotifier({ fetchImpl })
-  const md = '### 标题\n数据来源：[AIHOT](https://aihot.news)\n\nvia AIHOT 雷达 · 安装：x'
+  const md = '### 标题\n数据来源：[AIHOT](https://aihot.news)\n\nvia ACME 值班群'
   const plain = '### 标题\n数据来源：[AIHOT](https://aihot.news)'
   await n.send({ channel: 'feishu', url: 'https://open.feishu.cn/x' }, 'Codex 额度重置（预告）', md)
   await n.send({ channel: 'telegram', url: '123:abc', secret: '42' }, '标题', plain)
@@ -151,20 +151,16 @@ await atest('A2 feishu sends a card; telegram flattened; wecom keeps markdown', 
   assert.ok(!div.text.content.includes('###'), 'headings become bold, not "###"')
   assert.ok(div.text.content.includes('**标题**'))
   assert.ok(div.text.content.includes('[AIHOT](https://aihot.news)'), 'card keeps inline markdown links')
-  const note = card.elements.find((e) => e.tag === 'note')
-  assert.ok(note && note.elements[0].content.includes('via AIHOT'), 'signature moves to the note')
-  assert.equal(note.elements[0].tag, 'lark_md', 'signature note is lark_md so its install link stays tappable')
-  assert.ok(DEFAULT_SIGNATURE.includes('](https://github.com/liancheng2020/dsh-aihot-radar'),
-    'built-in signature wraps the install spec in a markdown link')
-  assert.ok(!div.text.content.includes('via AIHOT'), 'signature left the body')
+  assert.ok(div.text.content.includes('via ACME 值班群'), 'a custom footer stays part of the body')
+  assert.equal(card.elements.length, 1, 'no note element: with no built-in footer there is nothing to lift out')
 
   assert.ok(!telegram.body.text.includes('###') && telegram.body.text.includes('AIHOT https://aihot.news'), 'telegram is plain')
   assert.ok(wecom.body.markdown.content.includes('**标题**'), 'wecom keeps markdown')
 
-  const flatSig = toPlainText(`正文\n\n${DEFAULT_SIGNATURE}`)
-  assert.ok(flatSig.includes('安装：github:liancheng2020/dsh-aihot-radar'), 'plain-text signature keeps the install spec')
-  assert.ok(!flatSig.includes('https://github.com/liancheng2020/dsh-aihot-radar'),
-    'plain-text signature drops the URL so it stays one clean line')
+  // The text is the user's own now, so its link is not stripped the way the
+  // removed built-in install line was.
+  assert.ok(toPlainText('正文\n\nvia ACME [群公告](https://example.com/x)')
+    .endsWith('via ACME 群公告 https://example.com/x'), 'a custom footer keeps its link')
   assert.ok(toPlainText('数据来源：[AIHOT](https://aihot.news)').includes('AIHOT https://aihot.news'),
     'body links keep their target in plain text')
 })
@@ -223,24 +219,64 @@ await atest('Q3 quiet defers (unseen) then pushes after window', async () => {
   assert.equal(r.notified.length, 1)
 })
 
-// ---- S: push-card signature (on by default, opt-out, custom text) ----
-test('S1 signature on by default in reset card', () => {
+// ---- S: no built-in footer; only the user's own line, brand stays in title ----
+const INSTALL_LINK = /github\.com\/liancheng2020|安装：github:|via AIHOT/
+test('S1 no footer and no install link unless the user wrote one', () => {
   const ev = { status: 'announced', title: 't', presentation: { status: 'announced' } }
-  assert.ok(formatResetMessage('codex', ev).text.endsWith(DEFAULT_SIGNATURE))
+  const { title, text } = formatResetMessage('codex', ev)
+  assert.ok(!INSTALL_LINK.test(text), 'default config must not append the promo line')
+  assert.ok(title.startsWith('AIHOT 雷达 · '), 'the brand must still identify the card: ' + title)
 })
-test('S2 signature on in inferred card', () => {
-  const ev = { status: 'announced', title: 't', presentation: { status: 'likely_completed' } }
-  const { text } = formatInferredMessage('claude', ev)
-  assert.ok(text.endsWith(DEFAULT_SIGNATURE))
+test('S2 signature:true alone no longer appends the removed built-in line', () => {
+  const ev = { status: 'announced', title: 't', presentation: { status: 'announced' } }
+  const inferredEv = { status: 'announced', title: 't', presentation: { status: 'likely_completed' } }
+  for (const notify of [{ signature: true }, { signature: true, signatureText: '   ' }]) {
+    assert.equal(signatureEnabled(notify), false)
+    assert.ok(!INSTALL_LINK.test(formatResetMessage('codex', ev, notify).text))
+    const inferred = formatInferredMessage('claude', inferredEv, notify)
+    assert.ok(!INSTALL_LINK.test(inferred.text))
+    assert.ok(inferred.title.startsWith('AIHOT 雷达 · '), 'the title still carries the brand')
+  }
 })
-test('S3 notify.signature=false removes the line', () => {
-  const ev = { status: 'confirmed', title: 't' }
-  assert.ok(!formatResetMessage('codex', ev, { signature: false }).text.includes('via AIHOT'))
-  assert.ok(!withSignature('body', { signature: false }).includes('via AIHOT'))
+test('S2b a stale panel record (state.notify.signature = true) adds nothing', () => {
+  const ev = { status: 'announced', title: 't', presentation: { status: 'announced' } }
+  const legacy = effectiveNotify({}, { notify: { signature: true } })
+  assert.equal(signatureEnabled(legacy), false, 'the old checkbox meant "install link", which is gone')
+  assert.ok(!INSTALL_LINK.test(formatResetMessage('codex', ev, legacy).text))
+  // …and it must not resurrect the line next to a profile that never set one.
+  assert.equal(withSignature('body', effectiveNotify(undefined, { notify: { signature: true } })), 'body')
 })
-test('S4 custom signatureText wins over the default', () => {
+test('S2c a stored true cannot override an explicit signature: false', () => {
+  const ev = { status: 'announced', title: 't', presentation: { status: 'announced' } }
+  // The profile says "never append", with a line configured but switched off; the
+  // stale record says "add the install link". The profile is the current answer.
+  const merged = effectiveNotify({ signature: false, signatureText: 'via ACME' }, { notify: { signature: true } })
+  assert.equal(merged.signature, false, 'a stored true must be ignored, not merged in')
+  assert.equal(signatureEnabled(merged), false)
+  assert.equal(withSignature('body', merged), 'body')
+  assert.ok(!formatResetMessage('codex', ev, merged).text.includes('via ACME'))
+
+  // Same config, no stored value: false keeps working.
+  assert.equal(withSignature('body', effectiveNotify({ signature: false, signatureText: 'via ACME' }, { notify: { signature: null } })), 'body')
+  // A stored true next to an enabled profile line is a no-op, not a veto.
+  assert.equal(withSignature('body', effectiveNotify({ signatureText: 'via ACME' }, { notify: { signature: true } })), 'body\n\nvia ACME')
+})
+
+test('S3 signatureText alone enables, signature:false wins over it', () => {
   assert.equal(withSignature('body', { signatureText: 'via ACME' }), 'body\n\nvia ACME')
-  assert.equal(withSignature('body', { signatureText: '   ' }), `body\n\n${DEFAULT_SIGNATURE}`)
+  assert.equal(withSignature('body', { signatureText: 'via ACME', signature: false }), 'body')
+  assert.equal(withSignature('body', { signatureText: '   ' }), 'body')
+  assert.equal(withSignature('body', { signature: true, signatureText: '   ' }), 'body')
+  assert.equal(withSignature('body'), 'body')
+  assert.equal(withSignature('body', {}), 'body')
+})
+test('S4 signatureEnabled reports what the sender really does', () => {
+  assert.equal(signatureEnabled(undefined), false)
+  assert.equal(signatureEnabled({}), false)
+  assert.equal(signatureEnabled({ signature: false }), false)
+  assert.equal(signatureEnabled({ signature: true }), false, 'no built-in line to turn on')
+  assert.equal(signatureEnabled({ signatureText: 'x' }), true)
+  assert.equal(signatureEnabled({ signatureText: 'x', signature: false }), false)
 })
 
 // ---- TZ: configurable digest timezone ----
@@ -274,6 +310,10 @@ await atest('L1 bridge status configured + test-push reaches webhook', async () 
   assert.ok(!JSON.stringify(st).includes('s3cret'), 'no secret leakage')
   const tp = await (await fetch('http://127.0.0.1:17421/test-push', { method: 'POST' })).json()
   assert.equal(tp.ok, true); assert.ok(received.length >= 1, 'webhook received test push')
+  const testBody = JSON.stringify(received[0])
+  assert.ok(testBody.includes('AIHOT 雷达 · 测试推送'), 'test push keeps the brand in the title')
+  assert.ok(testBody.includes('仅代表'), 'and says what success does (not) promise')
+  assert.ok(!testBody.includes('via AIHOT'), 'no footer unless the user opted in')
   stop(); await shutdown(hook)
 })
 
@@ -717,6 +757,264 @@ await atest('P5 a body that dies after the headers is delivery-unknown, not retr
   assert.ok(/送达不确定/.test(r.error), r.error)
 })
 
+// ---- LK: a leftover lock must never stall the radar; a live one is honoured --
+await atest('LK1 a half-written lock created a moment ago is not stolen', async () => {
+  const { acquireStateLock, dataDir } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    mkdirSync(dataDir(), { recursive: true, mode: 0o700 })
+    const lock = join(dataDir(), 'state.json.lock')
+    writeFileSync(lock, '{"pid": 4321, "ts":', 'utf8') // crashed mid-write
+    assert.equal(acquireStateLock(), null, 'a fresh unparseable lock may still be filling in')
+    assert.equal(readFileSync(lock, 'utf8'), '{"pid": 4321, "ts":', 'and must not be overwritten')
+  })
+})
+
+await atest('LK2 a stale corrupt lock is recovered instead of wedging every cycle', async () => {
+  const { acquireStateLock, dataDir } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    mkdirSync(dataDir(), { recursive: true, mode: 0o700 })
+    const lock = join(dataDir(), 'state.json.lock')
+    const old = (Date.now() - 120000) / 1000 // past the 60s TTL, no waiting in the test
+    writeFileSync(lock, 'garbage', 'utf8')
+    utimesSync(lock, old, old)
+    const release = acquireStateLock()
+    assert.ok(release, 'an unreadable lock older than the TTL is taken over')
+    assert.ok(JSON.parse(readFileSync(lock, 'utf8')).ts > 0, 'rewritten with a live stamp')
+    release()
+    assert.equal(existsSync(lock), false, 'and released normally, so the next cycle runs')
+  })
+})
+
+await atest('LK3 a live lock wins over an old mtime, and a corrupt guard does not block', async () => {
+  const { acquireStateLock, dataDir } = await import('../lib/state.js')
+  await withTempHome(async () => {
+    mkdirSync(dataDir(), { recursive: true, mode: 0o700 })
+    const lock = join(dataDir(), 'state.json.lock')
+    const guard = join(dataDir(), 'state.json.lock.takeover')
+    const old = (Date.now() - 120000) / 1000
+    // Heartbeat says it is alive even though the file looks old (e.g. a copied
+    // state dir): the stamp is the evidence, the mtime only a fallback.
+    writeFileSync(lock, JSON.stringify({ pid: 999, ts: Date.now(), token: 'other' }))
+    utimesSync(lock, old, old)
+    assert.equal(acquireStateLock(), null, 'a live holder is never preempted')
+
+    // A takeover that crashed between creating its guard and unlinking it must
+    // not block the next one forever.
+    writeFileSync(guard, 'half-writ')
+    utimesSync(guard, old, old)
+    writeFileSync(lock, 'garbage')
+    utimesSync(lock, old, old)
+    const release = acquireStateLock()
+    assert.ok(release, 'the stale guard is cleared and the stale lock taken over')
+    release()
+  })
+})
+
+// ---- B: the first push after configuring a channel must not replay history --
+const inferredEvent = (id) => ({
+  id, status: 'announced', displayLabel: 'x', title: 't', presentation: { status: 'expired_unconfirmed' }, posts: [],
+})
+
+await atest('B1 first cycle after configuring a channel baselines 已到账, keeps 预告', async () => {
+  const state = notiState()
+  const api = { resetsRecent: async () => ({ events: [mkEvent('old', 'confirmed'), mkEvent('live'), inferredEvent('gone')] }) }
+  const sent = []
+  const notifier = { send: async (wh, title) => { sent.push(title); return { ok: true, status: 200, chunks: 1 } } }
+  const r = await scanProvider(api, 'codex', state, notifier, { baselineBefore: new Date().toISOString() })
+  assert.equal(r.notified.length, 1, 'only the still-open announcement is pushed')
+  assert.ok(sent[0].includes('预告'), sent[0])
+  // Pushed events are marked seen as usual; the two stale ones are retired without
+  // a push, which is what `sent` being backlogs-free proves.
+  assert.deepEqual(state.seen.codex.sort(), ['gone:announced:expired_unconfirmed', 'live:announced', 'old:confirmed'].sort(),
+    'history retires silently: ' + JSON.stringify(state.seen.codex))
+})
+
+await atest('B2 the baseline is one-shot: anything arriving later is news', async () => {
+  const state = notiState()
+  let events = [mkEvent('old', 'confirmed')]
+  const api = { resetsRecent: async () => ({ events }) }
+  let sent = 0
+  const notifier = { send: async () => { sent++; return { ok: true, status: 200, chunks: 1 } } }
+  await scanProvider(api, 'codex', state, notifier, { baselineBefore: new Date().toISOString() })
+  assert.equal(sent, 0, 'the backlog stays silent')
+  events = [mkEvent('old', 'confirmed'), mkEvent('fresh', 'confirmed')]
+  await scanProvider(api, 'codex', state, notifier)
+  assert.equal(sent, 1, 'a confirmation that arrives afterwards pushes normally')
+  assert.deepEqual(state.seen.codex.sort(), ['fresh:confirmed', 'old:confirmed'].sort())
+})
+
+// ---- B4..B6: the baseline is a cutoff, not "whichever scan happens first" ----
+const stamped = (id, at, status = 'confirmed') => ({
+  id, status, displayLabel: 'x', title: 't', presentation: { status }, confirmedAt: at, posts: [],
+})
+
+await atest('B4 an event confirmed after the channel was configured still pushes on the first scan', async () => {
+  const state = notiState()
+  const sent = []
+  const api = {
+    resetsRecent: async () => ({
+      events: [
+        stamped('backlog', '2026-11-20T07:55:00.000Z'),
+        stamped('between', '2026-11-20T08:06:00.000Z'), // after the save, before the first scan
+      ],
+    }),
+  }
+  const notifier = { send: async (wh, title) => { sent.push(title); return { ok: true, status: 200, chunks: 1 } } }
+  await scanProvider(api, 'codex', state, notifier, { baselineBefore: '2026-11-20T08:05:00.000Z' })
+  assert.equal(sent.length, 1, 'only the pre-configuration backlog is retired')
+  assert.ok(sent[0].includes('已到账'), sent[0])
+  assert.deepEqual(state.seen.codex.sort(), ['backlog:confirmed', 'between:confirmed'].sort())
+})
+
+await atest('B5 a provider whose first scan failed cannot replay the backlog later', async () => {
+  await withTempHome(async () => {
+    const { loadState, saveState } = await import('../lib/state.js')
+    const { scanCycle } = await import('../lib/radar.js')
+    const cutoff = '2026-11-20T08:05:00.000Z'
+    const state = loadState()
+    state.webhook = { channel: 'wecom', url: 'https://x', secret: '' }
+    state.baselineConfirmed = cutoff
+    const sent = []
+    const notifier = { send: async (wh, title) => { sent.push(title); return { ok: true, status: 200, chunks: 1 } } }
+    let claudeFails = true
+    const api = {
+      PROVIDERS: ['codex', 'claude'],
+      resetsRecent: async (p) => {
+        if (p === 'claude' && claudeFails) throw new Error('HTTP 500')
+        return { events: [stamped(`${p}-old`, '2026-11-20T07:00:00.000Z')] }
+      },
+    }
+
+    let out = await scanCycle({ api, state, notifier, save: (s) => saveState(s) })
+    assert.equal(out.results.filter((r) => r.error).length, 1)
+    assert.equal(sent.length, 0)
+    assert.equal(state.baselineConfirmed, cutoff, 'kept while a provider has not scanned yet')
+
+    claudeFails = false
+    out = await scanCycle({ api, state, notifier, save: (s) => saveState(s) })
+    assert.equal(sent.length, 0, 'the retried provider retires the backlog instead of pushing it')
+    assert.equal(state.baselineConfirmed, null, 'and the cutoff is consumed by the clean cycle')
+    const disk = JSON.parse(readFileSync(join(process.env.DSH_HOME, 'aihot-radar', 'state.json'), 'utf8'))
+    assert.equal(disk.baselineConfirmed, null, 'the consumption is persisted, not just in memory')
+  })
+})
+
+await atest('B6 another instance saving the footer cannot erase a pending baseline', async () => {
+  await withTempHome(async (home) => {
+    const { loadState, saveState } = await import('../lib/state.js')
+    const panel = loadState()          // opened before the channel was configured
+    const radar = loadState()
+    radar.baselineConfirmed = '2026-11-20T08:05:00.000Z'
+    saveState(radar, undefined, { own: ['baselineConfirmed'] })
+
+    panel.notify = { signature: true }
+    saveState(panel, undefined, { own: ['notify'] })
+
+    const disk = JSON.parse(readFileSync(join(home, 'aihot-radar', 'state.json'), 'utf8'))
+    assert.equal(disk.baselineConfirmed, '2026-11-20T08:05:00.000Z', 'a footer save owns only the footer')
+    assert.equal(disk.notify.signature, true)
+  })
+})
+
+await atest('B7 a consumed baseline cannot be restored by an instance holding it', async () => {
+  await withTempHome(async (home) => {
+    const { loadState, saveState, mergeStateFromDisk } = await import('../lib/state.js')
+    const marker = '2026-11-20T08:05:00.000Z'
+    const radar = loadState()
+    radar.baselineConfirmed = marker
+    saveState(radar, undefined, { own: ['baselineConfirmed'] })
+
+    const stale = loadState()               // still holds the marker
+    assert.equal(stale.baselineConfirmed, marker)
+
+    radar.baselineConfirmed = null          // the radar consumes it
+    saveState(radar, undefined, { own: ['baselineConfirmed'] })
+
+    stale.notify = { signature: true }
+    saveState(stale, undefined, { own: ['notify'] })
+    const disk = JSON.parse(readFileSync(join(home, 'aihot-radar', 'state.json'), 'utf8'))
+    assert.equal(disk.baselineConfirmed, null, 'the explicit null on disk wins over the stale copy')
+
+    // And a merge must follow the file too, not the in-memory value.
+    const memory = { baselineConfirmed: marker, seen: {}, webhook: {}, lastCheck: {}, lastResult: {}, delivery: {}, digest: {}, notify: {}, digestPref: {} }
+    mergeStateFromDisk(memory)
+    assert.equal(memory.baselineConfirmed, null, 'a stale in-memory marker must not survive a merge')
+  })
+})
+
+await atest('B3 the bridge flags the first configuration only', async () => {
+  const state = { webhook: { channel: 'none', url: '', secret: '' }, baselineConfirmed: null }
+  const stop = bridge(17425, state, { save: () => true })
+  await wait()
+  const post = (b) => fetch('http://127.0.0.1:17425/webhook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
+  }).then((r) => r.json())
+  assert.equal((await post({ channel: 'bark', url: 'https://api.day.app/k' })).ok, true)
+  const first = state.baselineConfirmed
+  assert.ok(typeof first === 'string' && first.length > 10, 'first configuration schedules a baseline')
+  await new Promise((r) => setTimeout(r, 10))
+  assert.equal((await post({ channel: 'bark', url: 'https://api.day.app/k2' })).ok, true)
+  assert.equal(state.baselineConfirmed, first, 'editing an existing channel must not re-baseline')
+  stop()
+})
+
+// ---- K: the stored footer preference can only suppress the user's own line --
+await atest('K1 effectiveNotify: a stored off suppresses, a stored on adds nothing', async () => {
+  const { effectiveNotify, signatureEnabled } = await import('../lib/notify.js')
+  assert.equal(signatureEnabled(effectiveNotify(undefined, undefined)), false, 'default is off')
+  assert.equal(signatureEnabled(effectiveNotify({}, { notify: { signature: true } })), false,
+    'the old switch meant "install link", which no longer exists')
+  assert.equal(signatureEnabled(effectiveNotify({ signatureText: 'via X' }, { notify: { signature: false } })), false,
+    'a stored off still wins over custom text')
+  assert.equal(signatureEnabled(effectiveNotify({ signatureText: 'via X' }, { notify: { signature: null } })), true, 'null hands control back')
+  assert.equal(signatureEnabled(effectiveNotify({ signatureText: 'via X' }, { notify: { signature: true } })), true,
+    'a stored on neither adds a built-in line nor removes the custom one')
+  assert.equal(signatureEnabled(effectiveNotify({ signature: false, signatureText: 'via X' }, { notify: { signature: true } })), false,
+    'a stored on must not beat the profile\'s explicit off')
+})
+
+await atest('K2 /notify can only suppress a custom line; /status reports the truth', async () => {
+  const state = { webhook: { channel: 'wecom', url: 'https://x', secret: '' }, notify: { signature: null } }
+  let saves = 0
+  const stop = bridge(17426, state, {
+    config: { notify: { signatureText: 'via 值班群' } },
+    save: () => { saves++; return true },
+  })
+  await wait()
+  const post = (b) => fetch('http://127.0.0.1:17426/notify', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
+  }).then((r) => r.json())
+  const status = () => fetch('http://127.0.0.1:17426/status').then((r) => r.json())
+
+  assert.equal((await status()).signature, true, 'the configured custom line is what decides')
+  const off = await post({ signature: false })
+  assert.equal(off.ok, true); assert.equal(off.signature, false, 'a stored off suppresses it')
+  assert.equal(state.notify.signature, false, 'stored in state, not the profile YAML')
+  assert.equal((await status()).signature, false, 'and visible without a restart')
+  assert.equal(saves, 1)
+
+  assert.equal((await post({ signature: 'yes' })).code, 'bad-signature', 'only true / false / null')
+  const back = await post({ signature: null })
+  assert.equal(back.ok, true); assert.equal(back.signature, true, 'null follows the profile')
+  stop()
+})
+
+await atest('K3 a profile custom line is honoured until a stored off overrides it', async () => {
+  const state = { webhook: { channel: 'wecom', url: 'https://x', secret: '' }, notify: { signature: null } }
+  const stop = startLocalApi({
+    port: 17427, state, notifier: createNotifier(),
+    config: { radar: {}, digest: {}, notify: { signatureText: 'via ACME' } }, save: () => true,
+  })
+  await wait()
+  const status = () => fetch('http://127.0.0.1:17427/status').then((r) => r.json())
+  assert.equal((await status()).signature, true, 'a profile custom line shows as on')
+  const off = await fetch('http://127.0.0.1:17427/notify', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature: false }),
+  }).then((r) => r.json())
+  assert.equal(off.signature, false, 'a stored off beats the profile text')
+  stop()
+})
+
 // ---- R: digest delivery semantics + config that arrives from another instance --
 await atest('R1 a timed-out digest is recorded uncertain and never retried', async () => {
   const { digestOutcome, alreadyHandledToday } = await import('../lib/digest.js')
@@ -738,6 +1036,251 @@ await atest('R1 a timed-out digest is recorded uncertain and never retried', asy
   assert.equal(out2.retry, true, 'a definite failure still retries')
   assert.equal(definite.digest.retries, 1)
   assert.equal(alreadyHandledToday(definite, '2026-11-16'), false)
+})
+
+await atest('R5 a chunked send reports which pieces landed and honours skip', async () => {
+  let attempts = 0
+  const bodies = []
+  const fetchImpl = async (url, init) => {
+    bodies.push(String(init.body))
+    attempts++
+    if (attempts === 2) return { ok: false, status: 500, headers: { get: () => 'application/json' }, text: async () => 'boom' }
+    return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify({ errcode: 0 }) }
+  }
+  const n = createNotifier({ fetchImpl })
+  const cfg = { channel: 'wecom', url: 'https://x' }
+  const long = 'x'.repeat(9000) // wecom caps at 3900 bytes, so this is three pieces
+  const r1 = await n.send(cfg, 'T', long)
+  assert.equal(r1.chunks, 3)
+  assert.deepEqual(r1.delivered, [0, 2], 'pieces 1 and 3 landed')
+  assert.deepEqual(r1.failed, [1], 'piece 2 did not')
+  assert.equal(r1.timeout, false, 'and its fate is known, so a resume is safe')
+
+  bodies.length = 0
+  const r2 = await n.send(cfg, 'T', long, { skip: r1.delivered })
+  assert.equal(bodies.length, 1, 'only the missing piece is posted again')
+  assert.ok(bodies[0].includes('续 2/3'), 'the resumed piece keeps its original numbering')
+  assert.equal(r2.ok, true)
+  assert.deepEqual([...r2.delivered].sort((a, b) => a - b), [0, 1, 2])
+})
+
+await atest('R6 a long digest retry only re-sends the pieces that failed', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    const calls = []
+    let first = true
+    const notifier = {
+      send: async (wh, title, text, opts = {}) => {
+        calls.push(Array.isArray(opts.skip) ? opts.skip.slice() : [])
+        if (first) {
+          first = false
+          return { ok: false, chunks: 3, total: 3, delivered: [0, 2], failed: [1], timeout: false, error: 'piece 2 failed' }
+        }
+        return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] }
+      },
+    }
+    const state = { webhook: { channel: 'wecom', url: 'https://x' }, digest: {} }
+    const r1 = await runDigest(api, state, notifier)
+    assert.equal(r1.ok, false)
+    assert.deepEqual(state.digest.partial.delivered, [0, 2], 'delivered pieces are recorded')
+    assert.equal(state.digest.partial.total, 3)
+
+    const r2 = await runDigest(api, state, notifier)
+    assert.equal(r2.ok, true)
+    assert.deepEqual(calls[1], [0, 2], 'the retry resumes instead of re-sending the whole report')
+    assert.equal(state.digest.partial, null, 'progress is cleared once the report is complete')
+  })
+})
+
+await atest('R7 a changed report is not re-sent over the pieces that already landed', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    let sections = []
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections } }) }
+    const skips = []
+    let first = true
+    const notifier = {
+      send: async (wh, title, text, opts = {}) => {
+        skips.push(Array.isArray(opts.skip) ? opts.skip.slice() : [])
+        if (first) {
+          first = false
+          return { ok: false, chunks: 3, total: 3, delivered: [0], failed: [1, 2], timeout: false, error: 'HTTP 500' }
+        }
+        return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] }
+      },
+    }
+    const state = { webhook: { channel: 'wecom', url: 'https://x' }, digest: {} }
+    await runDigest(api, state, notifier)
+    // Different content re-chunks differently: index-based resumption would leave
+    // a hole, and re-sending everything would duplicate the piece that landed. So
+    // neither happens — the partial stays, and a human decides.
+    sections = [{ title: 'changed', items: ['z'] }]
+    const r = await runDigest(api, state, notifier)
+    assert.equal(r.blocked, true)
+    assert.equal(skips.length, 1, 'nothing was posted again')
+    assert.deepEqual(state.digest.partial.delivered, [0], 'the landed piece is still recorded')
+  })
+})
+
+await atest('R8 an uncertain piece stops the resume and reports progress', async () => {
+  const { runDigest, digestOutcome } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    const notifier = {
+      send: async () => ({ ok: false, chunks: 3, total: 3, delivered: [0], failed: [1, 2], timeout: true, error: '请求超时（15000ms），送达不确定' }),
+    }
+    const state = { webhook: { channel: 'wecom', url: 'https://x' }, digest: {} }
+    const r = await runDigest(api, state, notifier)
+    assert.equal(state.digest.partial, null, 'nothing is queued: a timed-out piece may have landed')
+    const out = digestOutcome(state, r, '2026-11-19')
+    assert.equal(out.retry, false, 'and the day is not retried automatically')
+    assert.equal(out.uncertain, true)
+    assert.equal(state.digest.uncertain.delivered, 1, 'but the known progress is reported')
+    assert.equal(state.digest.uncertain.total, 3)
+  })
+})
+
+await atest('R10 a second bot of the same channel must not resume the first one\'s pieces', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    const skips = []
+    let first = true
+    const notifier = {
+      send: async (wh, t, text, opts = {}) => {
+        skips.push(Array.isArray(opts.skip) ? opts.skip.slice() : [])
+        if (first) {
+          first = false
+          return { ok: false, chunks: 3, total: 3, delivered: [0], failed: [1, 2], timeout: false, error: 'HTTP 500' }
+        }
+        return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] }
+      },
+    }
+    const state = { webhook: { channel: 'wecom', url: 'https://qyapi.weixin.qq.com/a' }, digest: {} }
+    await runDigest(api, state, notifier)
+    assert.deepEqual(state.digest.partial.delivered, [0])
+
+    // Same channel type, different bot: it never received piece 1.
+    state.webhook = { channel: 'wecom', url: 'https://qyapi.weixin.qq.com/b' }
+    await runDigest(api, state, notifier)
+    assert.deepEqual(skips[1], [], 'the new bot is sent the whole report')
+    assert.equal(state.digest.partial, null, 'and is only marked delivered once it has all of it')
+  })
+})
+
+await atest('R11 editing the footer before the retry must not re-send the landed pieces', async () => {
+  const { runDigest, digestOutcome } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    let sends = 0
+    let first = true
+    const notifier = {
+      send: async () => {
+        sends++
+        if (first) {
+          first = false
+          return { ok: false, chunks: 3, total: 3, delivered: [0, 1], failed: [2], timeout: false, error: 'HTTP 500' }
+        }
+        return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] }
+      },
+    }
+    const state = { webhook: { channel: 'wecom', url: 'https://x' }, digest: {}, notify: { signature: null } }
+    await runDigest(api, state, notifier)
+    assert.deepEqual(state.digest.partial.delivered, [0, 1])
+
+    // The footer changes between the failure and the retry: the text (and so the
+    // chunk boundaries) is no longer the one the first two pieces came from.
+    const r = await runDigest(api, state, notifier, { notify: { signatureText: 'via my group' } })
+    assert.equal(r.blocked, true, 'no automatic resume, and no blind re-send')
+    assert.equal(sends, 1, 'nothing is posted again')
+    assert.deepEqual(state.digest.partial.delivered, [0, 1], 'the partial record is kept')
+    assert.match(r.error, /内容与上次不同/)
+
+    const out = digestOutcome(state, r, '2026-11-19')
+    assert.equal(out.retry, false, 'a retry would only hit the same wall')
+    assert.equal(out.blocked, true)
+    assert.equal(state.digest.lastDate, undefined, 'and the day is not marked delivered')
+  })
+})
+
+await atest('R12 a legacy partial with no receiver is never resumed by channel type alone', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    let sends = 0
+    const notifier = { send: async () => { sends++; return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] } } }
+    const partial = { date: '2026-11-19', hash: 'whatever', channel: 'wecom', delivered: [0], total: 3 }
+    const state = { webhook: { channel: 'wecom', url: 'https://new-bot' }, digest: { partial } }
+
+    const r = await runDigest(api, state, notifier)
+    assert.equal(r.blocked, true)
+    assert.match(r.error, /接收端/)
+    assert.equal(sends, 0, 'neither resumed nor re-sent')
+    assert.deepEqual(state.digest.partial, partial, 'the partial record survives unchanged')
+  })
+})
+
+await atest('R13 digest: a stale footer record adds nothing, a custom footer survives the chunk retry', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    const api = { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) }
+    const PROMO = /via AIHOT|github\.com\/liancheng2020|安装：github:/
+
+    // A stale panel record (the removed "install link" checkbox) must not sneak a
+    // promo line into the digest either.
+    const legacyTexts = []
+    const legacyNotifier = {
+      send: async (wh, t, text) => { legacyTexts.push(text); return { ok: true, chunks: 1, total: 1, delivered: [0], failed: [] } },
+    }
+    await runDigest(
+      api,
+      { webhook: { channel: 'wecom', url: 'https://x' }, digest: {}, notify: { signature: true } },
+      legacyNotifier,
+    )
+    assert.ok(!PROMO.test(legacyTexts[0]), 'no built-in footer from a stale checked record')
+
+    // The user's own line is appended once, and a chunked retry still resumes only
+    // the pieces that failed (the text — footer included — is unchanged).
+    const calls = []
+    let first = true
+    const notifier = {
+      send: async (wh, t, text, opts = {}) => {
+        calls.push({ text, skip: Array.isArray(opts.skip) ? opts.skip.slice() : [] })
+        if (first) {
+          first = false
+          return { ok: false, chunks: 3, total: 3, delivered: [0, 2], failed: [1], timeout: false, error: 'HTTP 500' }
+        }
+        return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] }
+      },
+    }
+    const state = { webhook: { channel: 'wecom', url: 'https://x' }, digest: {}, notify: { signature: null } }
+    const config = { notify: { signatureText: 'via ACME 值班群' } }
+    const r1 = await runDigest(api, state, notifier, config)
+    assert.equal(r1.ok, false)
+    assert.equal(calls[0].text.match(/via ACME 值班群/g).length, 1, 'the custom footer appears exactly once')
+    assert.ok(!PROMO.test(calls[0].text), 'and no install link got appended next to it')
+
+    const r2 = await runDigest(api, state, notifier, config)
+    assert.equal(r2.ok, true)
+    assert.deepEqual(calls[1].skip, [0, 2], 'only the missing piece is posted again')
+    assert.ok(calls[1].text.includes('via ACME 值班群'), 'the retry keeps the same footer')
+    assert.equal(state.digest.lastDate, '2026-11-19')
+  })
+})
+
+await atest('R9 digest titles carry the same brand prefix as reset cards', async () => {
+  const { runDigest } = await import('../lib/digest.js')
+  await withTempHome(async () => {
+    let title = null
+    const notifier = { send: async (wh, t) => { title = t; return { ok: true, chunks: 1, total: 1, delivered: [0], failed: [] } } }
+    await runDigest(
+      { dailyJson: async () => ({ report: { date: '2026-11-19', sections: [] } }) },
+      { webhook: { channel: 'wecom', url: 'https://x' }, digest: {} },
+      notifier,
+    )
+    assert.ok(String(title).startsWith('AIHOT 雷达 · 日报 '), title)
+  })
 })
 
 await atest('R2 a digest switched off by another instance is not sent', async () => {
@@ -935,6 +1478,88 @@ await atest('T3 a definite failure still retries on the next tick', async () => 
       await h.ctl.tick()
       assert.equal(calls, 2, 'the uncertain guard must not swallow real failures')
       assert.equal(h.state.digest.uncertain, undefined)
+    } finally { h.ctl.stop() }
+  })
+})
+
+// ---- C: host Config defaults. index.js cannot be imported here — it pulls the
+// host's schemastery/dsh-tools peer deps, which a bare checkout does not have —
+// so the default objects are read from source and checked against the same
+// helpers the runtime uses. A drifting default is invisible at runtime (the
+// schema just hands it to the code), which is exactly why it needs a test.
+const indexSrc = readFileSync(join(here, '../index.js'), 'utf8')
+// Lazily resolved so a parse miss fails one case instead of killing the run.
+// Only PROVIDERS is in scope for these literals; spreading it there keeps the
+// default list from drifting away from the radar's own list.
+const defaultsOf = (name) => {
+  // One-liner literals first, otherwise the cross-line pattern would run on into
+  // the next declaration and swallow it.
+  const m = indexSrc.match(new RegExp(`const ${name} = (\\{[^\\n]*\\})`))
+    || indexSrc.match(new RegExp(`const ${name} = (\\{[\\s\\S]*?\\n\\})`))
+  assert.ok(m, `${name} must stay a plain object literal so the defaults can be checked here`)
+  return new Function('PROVIDERS', `return (${m[1]})`)(PROVIDERS)
+}
+let cfgRadar, cfgDigest, cfgNotify
+const configDefaults = () => {
+  cfgRadar ??= defaultsOf('DEFAULT_RADAR')
+  cfgDigest ??= defaultsOf('DEFAULT_DIGEST')
+  cfgNotify ??= defaultsOf('DEFAULT_NOTIFY')
+  return { cfgRadar, cfgDigest, cfgNotify }
+}
+
+test('C1 default digest time passes the validator the panel uses', () => {
+  const { cfgDigest } = configDefaults()
+  assert.equal(validateTime(cfgDigest.time), cfgDigest.time, 'a default that fails validation is silently rewritten')
+})
+test('C2 default digest timezone resolves to Asia/Shanghai', () => {
+  const { cfgDigest } = configDefaults()
+  assert.equal(resolveTz(cfgDigest.timezone), 'Asia/Shanghai')
+})
+test('C3 the footer stays opt-in by default', () => {
+  const { cfgNotify } = configDefaults()
+  assert.equal(signatureEnabled(cfgNotify), false, 'default config must not append the promo line')
+  assert.equal(withSignature('x', cfgNotify), 'x')
+})
+test('C4 the default provider list covers every provider', () => {
+  const { cfgRadar } = configDefaults()
+  assert.deepEqual([...cfgRadar.providers].sort(), [...PROVIDERS].sort(), 'a provider missing from the default is never scanned')
+})
+test('C5 default pollSeconds sits inside the schema window', () => {
+  const { cfgRadar } = configDefaults()
+  assert.ok(Number.isInteger(cfgRadar.pollSeconds) && cfgRadar.pollSeconds >= 60 && cfgRadar.pollSeconds <= 3600, 'the schema would silently clamp an out-of-range default')
+})
+test('C6 the default quiet window mutes nothing', () => {
+  const { cfgRadar, cfgDigest } = configDefaults()
+  assert.deepEqual(cfgRadar.quiet, { start: '', end: '' })
+  assert.equal(isQuietNow(cfgRadar.quiet, new Date('2026-11-20T03:00:00Z'), cfgDigest.timezone), false)
+})
+// The schema resolves defaults before notify.js sees the object, so a default on
+// `signature` silently rewrites "the user left it out" into an explicit "off" —
+// which beats signatureText and turns a custom footer into a no-op. Only a source
+// check can catch that here: the schema itself needs the host's schemastery.
+test('C7 notify.signature must have no schema default', () => {
+  const { cfgNotify } = configDefaults()
+  assert.ok(!('signature' in cfgNotify), 'DEFAULT_NOTIFY must not pin signature')
+  const m = indexSrc.match(/signature:\s*z\.boolean\(([^)]*)\)/)
+  assert.ok(m, 'notify.signature must stay a plain boolean schema')
+  assert.ok(!/default/i.test(m[1]), 'a default here would disable a custom signatureText')
+})
+
+await atest('T4 a partial that cannot be resumed is not retried on a timer', async () => {
+  await withTempHome(async () => {
+    let calls = 0
+    const h = await digestHarness(async () => { calls++; return { ok: true, chunks: 3, total: 3, delivered: [0, 1, 2], failed: [] } })
+    // Legacy record: same channel, but no receiver identity to compare against.
+    h.state.digest.partial = { date: h.today, hash: 'x', channel: 'wecom', delivered: [0], total: 3 }
+    try {
+      await h.ctl.tick()
+      assert.equal(calls, 0, 'nothing is sent: neither resumed nor re-sent')
+      assert.deepEqual(h.state.digest.partial.delivered, [0], 'the partial record is kept')
+      assert.equal(h.state.digest.lastDate, null, 'and the day is not claimed as delivered')
+      await h.ctl.tick()
+      h.ctl.reschedule()
+      await h.ctl.tick()
+      assert.equal(calls, 0, 'later ticks and a reschedule do not walk into the same wall')
     } finally { h.ctl.stop() }
   })
 })
