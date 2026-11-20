@@ -42,11 +42,11 @@ dsh plugin --profile web add dsh-aihot-radar
 # or install directly from the GitHub repository
 dsh plugin --profile web add github:liancheng2020/dsh-aihot-radar
 # or install the prebuilt package from the Release direct link
-dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.4.0/dsh-aihot-radar-0.4.0.tgz
+dsh plugin --profile web add https://github.com/liancheng2020/dsh-aihot-radar/releases/download/v0.4.2/dsh-aihot-radar-0.4.2.tgz
 ```
 Restart DSH. The **AIHOT Radar** panel is ready.
 
-> Current version `0.4.0` (see [CHANGELOG](CHANGELOG.md)). The npm package and the Release `.tgz` are built from the same source; check `npm view dsh-aihot-radar version` for the published version.
+> Current version `0.4.2` (see [CHANGELOG](CHANGELOG.md)). The npm package and the Release `.tgz` are built from the same source; check `npm view dsh-aihot-radar version` for the published version.
 
 ## Configure push (optional)
 

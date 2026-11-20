@@ -5,8 +5,21 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-20
+
 ### Changed
 - **移除内置推广尾注**：推送不再追加插件自己的安装链接，额度提醒、日报、测试推送三条链路一致。尾注只来自你自己写的 `notify.signatureText`；`notify.signature: true` 与旧面板的勾选记录都不再产生尾注，显式 `signature: false` 仍可关掉自定义文案。推送配置面板里已没有「附上安装链接」开关，中英文文案与 README 同步删除；通知标题继续保留「AIHOT 雷达」品牌。
+
+### Fixed
+- **首扫漏发 / 历史回灌**：历史与新闻的判定改用「通道配置时刻」（`baselineConfirmed`）与事件自身时间戳比较，不再看「这一轮是不是首扫」。配置推送后落地的事件即使出现在第一轮也会推送；而失败重试、慢启动或重启后，一周前的「已到账」不会被当成今天的新闻。读不到时间戳的一律按历史处理——宁可漏报一张旧卡，也不灌满刚配好的群。
+- **日报续传漏段 / 重复段**：续传前提收紧为「同日期 + 同接收端 + 同内容 SHA-1」。换一个 bot、改一次尾注都会改变分段位置，按旧索引补发会留空洞或重复；这类记录不再自动补发，只在日志说明原因并留待手动发送。
+- **「已归档」不再等于「已送达」**：`lastDate` 只在通道确认后写入；仅落盘的期单独记入 `digest.archived` 并保持待发。未配置通道时日志区分「已归档未推送」与「归档失败」，不再把失败说成归档。
+- **轮询缓存契约**：`Cache-Control` 的 `s-maxage` / `max-age` 解析为新鲜窗口（封顶 1 小时），304 同样更新窗口；无 ETag 但有窗口时照样记录，显式 `no-store` 则删除条目，避免下一轮发出服务端已不认的 `If-None-Match`。雷达以自己的间隔与上游新鲜窗口的较大者为下限，快轮询不会复读同一份文档。
+- **损坏的锁不再永久卡住雷达**：锁与接管文件无法解析时按 mtime 判龄，崩溃残留会被接管，而不是让每一轮扫描都跳过。
+- **废弃工作流的输入校验**：`spec` 按整串锚定 `dsh-aihot-radar@<semver>`，多行、版本范围（`>=0.0.0`）、前后缀垃圾与非法预发布标识都在动手前拒绝；输入只经环境变量传递，不进入 `run:` 文本。
+
+### 升级提示
+- 无需迁移：`state.json` 新增的 `notify`、`baselineConfirmed`、`digest.archived` 均可缺省。`pollSeconds` 默认值由 120 改为 600（AIHOT 建议 ≤10 分钟一次），显式配置仍以你的值为准，下限仍是 60 秒。
 
 ## [0.4.0] - 2026-11-18
 
@@ -125,6 +138,8 @@ All notable changes to this project are documented here. Format follows
 - 多实例（desktop + web）重复推送；`state.json` 损坏导致启动失败。
 - 自测依赖真实日期、结果不可复现。
 
+[0.4.2]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.4.2
+[0.4.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.4.0
 [0.3.2]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.3.2
 [0.3.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.3.0
 [0.2.0]: https://github.com/liancheng2020/dsh-aihot-radar/releases/tag/v0.2.0

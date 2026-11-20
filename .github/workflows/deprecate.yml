@@ -14,7 +14,7 @@ on:
       message:
         description: 'Deprecation message'
         required: true
-        default: 'staging build; use 0.4.0'
+        default: 'staging build; use 0.4.2'
 
 permissions:
   contents: read
